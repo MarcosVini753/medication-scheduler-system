@@ -4,3 +4,14 @@ at-backend/dist/
 at-backend/.env
 at-backend/.env.*
 !at-backend/.env.example
+at-backend/tsconfig.build.tsbuildinfo
+
+# VS Code & IDE
+.codex
+.vscode/settings.json
+.vscode/launch.json
+*.swp
+*.swo
+
+# OS
+.DS_Store
