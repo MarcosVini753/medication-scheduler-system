@@ -8,15 +8,12 @@
     "allowSyntheticDefaultImports": true,
     "target": "ES2021",
     "sourceMap": true,
+    "rootDir": "./src",
     "outDir": "./dist",
-    "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,
     "strictPropertyInitialization": false,
-    "noImplicitAny": false,
-    "paths": {
-      "src/*": ["src/*"]
-    }
+    "noImplicitAny": false
   }
 }
