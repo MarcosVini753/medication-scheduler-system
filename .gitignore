@@ -1,0 +1,6 @@
+# Backend
+at-backend/node_modules/
+at-backend/dist/
+at-backend/.env
+at-backend/.env.*
+!at-backend/.env.example
