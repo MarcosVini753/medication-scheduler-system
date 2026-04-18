@@ -70,7 +70,8 @@ export class PatientService {
   async getActiveRoutine(patientId: string): Promise<PatientRoutine> {
     const routines = await this.routineRepository.find({
       where: { patient: { id: patientId }, active: true },
-      relations: ['patient']
+      relations: ['patient'],
+      order: { createdAt: 'DESC', id: 'DESC' }
     });
 
     if (routines.length === 0) {

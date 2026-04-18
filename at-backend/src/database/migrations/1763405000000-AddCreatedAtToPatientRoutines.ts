@@ -16,6 +16,10 @@ export class AddCreatedAtToPatientRoutines1763405000000 implements MigrationInte
     `);
 
     await queryRunner.query(`
+      DROP INDEX IF EXISTS "IDX_patient_routines_single_active"
+    `);
+
+    await queryRunner.query(`
       WITH ranked_routines AS (
         SELECT
           id,
@@ -41,6 +45,10 @@ export class AddCreatedAtToPatientRoutines1763405000000 implements MigrationInte
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`
+      DROP INDEX IF EXISTS "IDX_patient_routines_single_active"
+    `);
+
     await queryRunner.query(`
       ALTER TABLE "patient_routines"
       DROP COLUMN IF EXISTS "createdAt"

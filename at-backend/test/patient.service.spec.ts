@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { QueryFailedError, Repository, DataSource } from 'typeorm';
 import { PatientService } from '../src/modules/patients/patient.service';
 import { Patient } from '../src/modules/patients/entities/patient.entity';
@@ -13,7 +13,9 @@ describe('PatientService', () => {
 
   beforeEach(() => {
     patientRepository = {};
-    routineRepository = {};
+    routineRepository = {
+      find: jest.fn()
+    };
     dataSource = {
       transaction: jest.fn()
     };
@@ -44,5 +46,38 @@ describe('PatientService', () => {
         dormir: '22:00'
       })
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('requests active routines ordered by createdAt descending and id descending', async () => {
+    const routine = {
+      id: 'routine-1',
+      active: true,
+      createdAt: new Date('2026-04-17T12:00:00Z')
+    } as PatientRoutine;
+
+    (routineRepository.find as jest.Mock).mockResolvedValue([routine]);
+
+    await expect(service.getActiveRoutine('patient-1')).resolves.toBe(routine);
+
+    expect(routineRepository.find).toHaveBeenCalledWith({
+      where: { patient: { id: 'patient-1' }, active: true },
+      relations: ['patient'],
+      order: { createdAt: 'DESC', id: 'DESC' }
+    });
+  });
+
+  it('throws not found when there is no active routine', async () => {
+    (routineRepository.find as jest.Mock).mockResolvedValue([]);
+
+    await expect(service.getActiveRoutine('patient-1')).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws conflict when multiple active routines are returned', async () => {
+    (routineRepository.find as jest.Mock).mockResolvedValue([
+      { id: 'routine-2' },
+      { id: 'routine-1' }
+    ]);
+
+    await expect(service.getActiveRoutine('patient-1')).rejects.toThrow(ConflictException);
   });
 });
