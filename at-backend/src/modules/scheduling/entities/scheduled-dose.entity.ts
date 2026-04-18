@@ -16,6 +16,15 @@ export class ScheduledDose {
   @Column()
   doseLabel: string;
 
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  administrationValue?: string;
+
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  administrationUnit?: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  administrationLabel?: string;
+
   @Column({ type: 'int' })
   timeInMinutes: number;
 

@@ -7,6 +7,7 @@ import { ScheduleStatus } from "../../common/enums/schedule-status.enum";
 import { minutesToHhmm, hhmmToMinutes } from "../../common/utils/time.util";
 import { PatientService } from "../patients/patient.service";
 import { Prescription } from "../prescriptions/entities/prescription.entity";
+import { PrescriptionItemDoseOverride } from "../prescriptions/entities/prescription-item.entity";
 import { PrescriptionItem } from "../prescriptions/entities/prescription-item.entity";
 import { ScheduledDose } from "./entities/scheduled-dose.entity";
 import {
@@ -18,6 +19,12 @@ import { SchedulingRulesService } from "./services/scheduling-rules.service";
 interface WorkingEntry extends ScheduleEntryDto {
   prescriptionItem: PrescriptionItem;
   interferesWithSalts: boolean;
+}
+
+interface ResolvedAdministration {
+  administrationValue?: string;
+  administrationUnit?: string;
+  administrationLabel: string;
 }
 
 @Injectable()
@@ -86,6 +93,9 @@ export class SchedulingService {
           prescription,
           prescriptionItem: entry.prescriptionItem,
           doseLabel: entry.doseLabel,
+          administrationValue: entry.administrationValue,
+          administrationUnit: entry.administrationUnit,
+          administrationLabel: entry.administrationLabel,
           timeInMinutes: entry.timeInMinutes,
           timeFormatted: entry.timeFormatted,
           status: entry.status,
@@ -104,6 +114,9 @@ export class SchedulingService {
           entry.prescriptionItem.medication.activePrinciple,
         groupCode: entry.prescriptionItem.medication.group.code,
         doseLabel: entry.doseLabel,
+        administrationValue: entry.administrationValue,
+        administrationUnit: entry.administrationUnit,
+        administrationLabel: entry.administrationLabel ?? entry.doseLabel,
         timeInMinutes: entry.timeInMinutes,
         timeFormatted: entry.timeFormatted,
         status: entry.status,
@@ -255,12 +268,17 @@ export class SchedulingService {
     timeInMinutes: number,
     note?: string,
   ): WorkingEntry {
+    const administration = this.resolveAdministration(item, doseLabel);
+
     return {
       medicationId: item.medication.id,
       medicationName:
         item.medication.commercialName || item.medication.activePrinciple,
       groupCode: item.medication.group.code,
       doseLabel,
+      administrationValue: administration.administrationValue,
+      administrationUnit: administration.administrationUnit,
+      administrationLabel: administration.administrationLabel,
       timeInMinutes,
       timeFormatted: minutesToHhmm(timeInMinutes),
       status: ScheduleStatus.ACTIVE,
@@ -268,6 +286,42 @@ export class SchedulingService {
       prescriptionItem: item,
       interferesWithSalts: item.medication.interferesWithSalts,
     };
+  }
+
+  private resolveAdministration(
+    item: PrescriptionItem,
+    doseLabel: string,
+  ): ResolvedAdministration {
+    const override = this.findDoseOverride(item, doseLabel);
+    const administrationValue = override?.doseValue ?? item.doseValue;
+    const administrationUnit = override?.doseUnit ?? item.doseUnit;
+
+    if (administrationValue && administrationUnit) {
+      return {
+        administrationValue,
+        administrationUnit,
+        administrationLabel: `${administrationValue} ${administrationUnit}`,
+      };
+    }
+
+    const fallbackLabel = administrationValue ?? item.doseAmount ?? doseLabel;
+
+    return {
+      administrationValue,
+      administrationUnit,
+      administrationLabel: fallbackLabel,
+    };
+  }
+
+  private findDoseOverride(
+    item: PrescriptionItem,
+    doseLabel: string,
+  ): PrescriptionItemDoseOverride | undefined {
+    if (item.sameDosePerSchedule || !item.perDoseOverrides?.length) {
+      return undefined;
+    }
+
+    return item.perDoseOverrides.find((override) => override.doseLabel === doseLabel);
   }
 
   async getScheduleByPrescription(
