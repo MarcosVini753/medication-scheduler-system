@@ -1,4 +1,6 @@
 import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { PrnReason } from '../../../common/enums/prn-reason.enum';
+import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
 import { Prescription } from '../../prescriptions/entities/prescription.entity';
 import { PrescriptionItem } from '../../prescriptions/entities/prescription-item.entity';
 
@@ -24,6 +26,30 @@ export class ScheduledDose {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   administrationLabel?: string;
+
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  recurrenceType?: TreatmentRecurrence;
+
+  @Column({ type: 'date', nullable: true })
+  startDate?: string;
+
+  @Column({ type: 'date', nullable: true })
+  endDate?: string;
+
+  @Column({ nullable: true })
+  weeklyDay?: string;
+
+  @Column({ type: 'int', nullable: true })
+  monthlyDay?: number;
+
+  @Column({ type: 'int', nullable: true })
+  alternateDaysInterval?: number;
+
+  @Column({ default: false })
+  continuousUse: boolean;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  prnReason?: PrnReason;
 
   @Column({ type: 'int' })
   timeInMinutes: number;

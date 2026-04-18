@@ -4,6 +4,7 @@ import { Repository } from "typeorm";
 import { GroupCode } from "../../common/enums/group-code.enum";
 import { MealAnchor } from "../../common/enums/meal-anchor.enum";
 import { ScheduleStatus } from "../../common/enums/schedule-status.enum";
+import { buildRecurrenceMetadata } from "../../common/utils/recurrence.util";
 import { minutesToHhmm, hhmmToMinutes } from "../../common/utils/time.util";
 import { PatientService } from "../patients/patient.service";
 import { Prescription } from "../prescriptions/entities/prescription.entity";
@@ -76,6 +77,9 @@ export class SchedulingService {
       );
     });
 
+    entries = entries.map((entry) =>
+      this.attachClinicalMetadata(entry, prescription),
+    );
     entries = this.applySpecialRules(entries, anchors);
     entries.sort(
       (a, b) =>
@@ -96,6 +100,14 @@ export class SchedulingService {
           administrationValue: entry.administrationValue,
           administrationUnit: entry.administrationUnit,
           administrationLabel: entry.administrationLabel,
+          recurrenceType: entry.recurrenceType,
+          startDate: entry.startDate,
+          endDate: entry.endDate,
+          weeklyDay: entry.weeklyDay,
+          monthlyDay: entry.monthlyDay,
+          alternateDaysInterval: entry.alternateDaysInterval,
+          continuousUse: entry.continuousUse,
+          prnReason: entry.prnReason,
           timeInMinutes: entry.timeInMinutes,
           timeFormatted: entry.timeFormatted,
           status: entry.status,
@@ -117,6 +129,14 @@ export class SchedulingService {
         administrationValue: entry.administrationValue,
         administrationUnit: entry.administrationUnit,
         administrationLabel: entry.administrationLabel ?? entry.doseLabel,
+        recurrenceType: entry.recurrenceType,
+        startDate: entry.startDate,
+        endDate: entry.endDate,
+        weeklyDay: entry.weeklyDay,
+        monthlyDay: entry.monthlyDay,
+        alternateDaysInterval: entry.alternateDaysInterval,
+        continuousUse: entry.continuousUse,
+        prnReason: entry.prnReason,
         timeInMinutes: entry.timeInMinutes,
         timeFormatted: entry.timeFormatted,
         status: entry.status,
@@ -279,12 +299,23 @@ export class SchedulingService {
       administrationValue: administration.administrationValue,
       administrationUnit: administration.administrationUnit,
       administrationLabel: administration.administrationLabel,
+      continuousUse: item.continuousUse,
       timeInMinutes,
       timeFormatted: minutesToHhmm(timeInMinutes),
       status: ScheduleStatus.ACTIVE,
       note,
       prescriptionItem: item,
       interferesWithSalts: item.medication.interferesWithSalts,
+    };
+  }
+
+  private attachClinicalMetadata(
+    entry: WorkingEntry,
+    prescription: Prescription,
+  ): WorkingEntry {
+    return {
+      ...entry,
+      ...buildRecurrenceMetadata(entry.prescriptionItem, prescription),
     };
   }
 

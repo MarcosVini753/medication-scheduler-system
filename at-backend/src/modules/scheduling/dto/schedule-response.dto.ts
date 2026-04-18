@@ -1,3 +1,6 @@
+import { PrnReason } from '../../../common/enums/prn-reason.enum';
+import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
+
 export interface ScheduleEntryDto {
   medicationId: string;
   medicationName: string;
@@ -6,6 +9,14 @@ export interface ScheduleEntryDto {
   administrationValue?: string;
   administrationUnit?: string;
   administrationLabel: string;
+  recurrenceType?: TreatmentRecurrence;
+  startDate?: string;
+  endDate?: string;
+  weeklyDay?: string;
+  monthlyDay?: number;
+  alternateDaysInterval?: number;
+  continuousUse: boolean;
+  prnReason?: PrnReason;
   timeInMinutes: number;
   timeFormatted: string;
   status: string;
