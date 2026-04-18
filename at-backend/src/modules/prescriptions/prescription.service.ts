@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { PrnReason } from '../../common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
 import { MedicationService } from '../medications/medication.service';
@@ -14,7 +14,7 @@ import { PrescriptionItem } from './entities/prescription-item.entity';
 export class PrescriptionService {
   constructor(
     @InjectRepository(Prescription) private readonly prescriptionRepository: Repository<Prescription>,
-    @InjectRepository(PrescriptionItem) private readonly itemRepository: Repository<PrescriptionItem>,
+    private readonly dataSource: DataSource,
     private readonly patientService: PatientService,
     private readonly medicationService: MedicationService,
     private readonly schedulingService: SchedulingService
@@ -23,27 +23,40 @@ export class PrescriptionService {
   async create(dto: CreatePrescriptionDto) {
     const patient = await this.patientService.findById(dto.patientId);
 
-    const items = await Promise.all(
-      dto.items.map(async (itemDto) => {
-        const medication = await this.medicationService.findCatalogById(itemDto.medicationId);
-        return this.itemRepository.create({
-          ...this.normalizeItemDto(itemDto),
-          medication
-        });
-      })
-    );
+    return this.dataSource.transaction(async (manager) => {
+      const prescriptionRepository = manager.getRepository(Prescription);
+      const itemRepository = manager.getRepository(PrescriptionItem);
 
-    const prescription = await this.prescriptionRepository.save(
-      this.prescriptionRepository.create({
-        patient,
-        startedAt: dto.startedAt,
-        status: 'ACTIVE',
-        items
-      })
-    );
+      const items = await Promise.all(
+        dto.items.map(async (itemDto) => {
+          const medication = await this.medicationService.findCatalogById(itemDto.medicationId);
+          return itemRepository.create({
+            ...this.normalizeItemDto(itemDto),
+            medication
+          });
+        })
+      );
 
-    const loaded = await this.findById(prescription.id);
-    return this.schedulingService.buildAndPersistSchedule(loaded);
+      const prescription = await prescriptionRepository.save(
+        prescriptionRepository.create({
+          patient,
+          startedAt: dto.startedAt,
+          status: 'ACTIVE',
+          items
+        })
+      );
+
+      const loaded = await prescriptionRepository.findOne({
+        where: { id: prescription.id },
+        relations: ['patient', 'items', 'items.medication', 'items.medication.group']
+      });
+
+      if (!loaded) {
+        throw new NotFoundException('Prescrição não encontrada.');
+      }
+
+      return this.schedulingService.buildAndPersistSchedule(loaded, manager);
+    });
   }
 
   async list(): Promise<Prescription[]> {

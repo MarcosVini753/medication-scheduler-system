@@ -42,6 +42,17 @@ describe('CreatePrescriptionItemDto clinical validation', () => {
     );
   });
 
+  it('rejects weekly recurrence with an invalid weekday value', () => {
+    const errors = validateItem(
+      buildValidItem({
+        recurrenceType: TreatmentRecurrence.WEEKLY,
+        weeklyDay: 'feriado',
+      }),
+    );
+
+    expect(errors).toContain('weeklyDay deve ser um dia valido da semana.');
+  });
+
   it('rejects monthly recurrence without monthlyDay or monthlyRule', () => {
     const errors = validateItem(
       buildValidItem({
@@ -104,6 +115,22 @@ describe('CreatePrescriptionItemDto clinical validation', () => {
 
     expect(errors).toContain(
       'perDoseOverrides e obrigatorio quando sameDosePerSchedule for false.',
+    );
+  });
+
+  it('rejects variable dose overrides that do not cover D1..Dn exactly once', () => {
+    const errors = validateItem(
+      buildValidItem({
+        sameDosePerSchedule: false,
+        perDoseOverrides: [
+          { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+          { doseLabel: 'D1', doseValue: '2', doseUnit: DoseUnit.COMP },
+        ],
+      }),
+    );
+
+    expect(errors).toContain(
+      'perDoseOverrides deve cobrir exatamente as doses D1 até Dn sem repeticao.',
     );
   });
 

@@ -76,10 +76,12 @@ export class CreatePrescriptionItemDto {
 
   @ValidateIf((item, value) => shouldValidateWeeklyDay(item, value))
   @IsDefined({ message: 'weeklyDay é obrigatório para recorrência WEEKLY.' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   @IsString()
   weeklyDay?: string;
 
   @ValidateIf((item, value) => shouldValidateMonthlyRule(item, value))
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   monthlyRule?: string;
 

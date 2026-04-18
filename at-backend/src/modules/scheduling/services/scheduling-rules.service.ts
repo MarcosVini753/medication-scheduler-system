@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { GroupCode } from '../../../common/enums/group-code.enum';
 import { MealAnchor } from '../../../common/enums/meal-anchor.enum';
 
@@ -120,7 +120,9 @@ export class SchedulingRulesService {
 
     const formula = recipes[groupCode]?.[frequency];
     if (!formula) {
-      throw new Error(`Fórmula não cadastrada para grupo ${groupCode} e frequência ${frequency}.`);
+      throw new UnprocessableEntityException(
+        `Fórmula não cadastrada para grupo ${groupCode} e frequência ${frequency}.`,
+      );
     }
     return formula;
   }

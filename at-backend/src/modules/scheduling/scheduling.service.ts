@@ -1,6 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { EntityManager, Repository } from "typeorm";
 import { GroupCode } from "../../common/enums/group-code.enum";
 import { MealAnchor } from "../../common/enums/meal-anchor.enum";
 import { ScheduleStatus } from "../../common/enums/schedule-status.enum";
@@ -8,6 +8,7 @@ import { TreatmentRecurrence } from "../../common/enums/treatment-recurrence.enu
 import {
   buildClinicalInstructionLabel,
   formatClinicalRecurrenceLabel,
+  normalizeMonthlyRule,
   normalizeWeeklyDay,
   validateMonthlyDay,
 } from "../../common/utils/recurrence.util";
@@ -42,12 +43,15 @@ export class SchedulingService {
   constructor(
     @InjectRepository(ScheduledDose)
     private readonly scheduledDoseRepository: Repository<ScheduledDose>,
+    @InjectRepository(Prescription)
+    private readonly prescriptionRepository: Repository<Prescription>,
     private readonly patientService: PatientService,
     private readonly rulesService: SchedulingRulesService,
   ) {}
 
   async buildAndPersistSchedule(
     prescription: Prescription,
+    entityManager?: EntityManager,
   ): Promise<SchedulingResultDto> {
     const anchors = await this.resolveScheduleAnchors(prescription);
 
@@ -61,7 +65,11 @@ export class SchedulingService {
     entries = this.applySpecialRules(entries, anchors);
     entries = this.sortEntries(entries);
 
-    const persisted = await this.persistSchedule(prescription, entries);
+    const persisted = await this.persistSchedule(
+      prescription,
+      entries,
+      entityManager,
+    );
     return this.mapSchedulingResult(prescription, persisted);
   }
 
@@ -316,6 +324,7 @@ export class SchedulingService {
       ...entry,
       recurrenceType,
       weeklyDay: normalizeWeeklyDay(item.weeklyDay),
+      monthlyRule: normalizeMonthlyRule(item.monthlyRule),
       monthlyDay: validateMonthlyDay(item.monthlyDay),
       alternateDaysInterval:
         recurrenceType === TreatmentRecurrence.ALTERNATE_DAYS
@@ -408,21 +417,33 @@ export class SchedulingService {
   private async persistSchedule(
     prescription: Prescription,
     entries: WorkingEntry[],
+    entityManager?: EntityManager,
   ): Promise<ScheduledDose[]> {
-    await this.scheduledDoseRepository.delete({
+    const scheduledDoseRepository = this.getScheduledDoseRepository(entityManager);
+
+    await scheduledDoseRepository.delete({
       prescription: { id: prescription.id },
     });
 
-    return this.scheduledDoseRepository.save(
-      entries.map((entry) => this.toScheduledDoseEntity(prescription, entry)),
+    return scheduledDoseRepository.save(
+      entries.map((entry) =>
+        this.toScheduledDoseEntity(scheduledDoseRepository, prescription, entry),
+      ),
     );
   }
 
+  private getScheduledDoseRepository(
+    entityManager?: EntityManager,
+  ): Repository<ScheduledDose> {
+    return entityManager?.getRepository(ScheduledDose) ?? this.scheduledDoseRepository;
+  }
+
   private toScheduledDoseEntity(
+    scheduledDoseRepository: Repository<ScheduledDose>,
     prescription: Prescription,
     entry: WorkingEntry,
   ): ScheduledDose {
-    return this.scheduledDoseRepository.create({
+    return scheduledDoseRepository.create({
       prescription,
       prescriptionItem: entry.prescriptionItem,
       doseLabel: entry.doseLabel,
@@ -433,6 +454,7 @@ export class SchedulingService {
       startDate: entry.startDate,
       endDate: entry.endDate,
       weeklyDay: entry.weeklyDay,
+      monthlyRule: entry.monthlyRule,
       monthlyDay: entry.monthlyDay,
       alternateDaysInterval: entry.alternateDaysInterval,
       continuousUse: entry.continuousUse,
@@ -464,6 +486,7 @@ export class SchedulingService {
           startDate: entry.startDate ?? "",
           endDate: entry.endDate,
           weeklyDay: entry.weeklyDay,
+          monthlyRule: entry.monthlyRule,
           monthlyDay: entry.monthlyDay,
           alternateDaysInterval: entry.alternateDaysInterval,
           continuousUse: entry.continuousUse,
@@ -488,6 +511,7 @@ export class SchedulingService {
       startDate: entry.startDate,
       endDate: entry.endDate,
       weeklyDay: entry.weeklyDay,
+      monthlyRule: entry.monthlyRule,
       monthlyDay: entry.monthlyDay,
       alternateDaysInterval: entry.alternateDaysInterval,
       continuousUse: entry.continuousUse,
@@ -503,7 +527,16 @@ export class SchedulingService {
 
   async getScheduleByPrescription(
     prescriptionId: string,
-  ): Promise<ScheduleEntryDto[]> {
+  ): Promise<SchedulingResultDto> {
+    const prescription = await this.prescriptionRepository.findOne({
+      where: { id: prescriptionId },
+      relations: ["patient"],
+    });
+
+    if (!prescription) {
+      throw new NotFoundException("Prescrição não encontrada.");
+    }
+
     const scheduledDoses = await this.scheduledDoseRepository.find({
       where: { prescription: { id: prescriptionId } },
       relations: [
@@ -514,7 +547,7 @@ export class SchedulingService {
       order: { timeInMinutes: "ASC" },
     });
 
-    return scheduledDoses.map((entry) => this.mapScheduleEntry(entry));
+    return this.mapSchedulingResult(prescription, scheduledDoses);
   }
 }
 

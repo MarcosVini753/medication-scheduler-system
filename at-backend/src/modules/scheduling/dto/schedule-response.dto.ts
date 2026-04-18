@@ -14,6 +14,7 @@ export interface ScheduleEntryDto {
   startDate?: string;
   endDate?: string;
   weeklyDay?: string;
+  monthlyRule?: string;
   monthlyDay?: number;
   alternateDaysInterval?: number;
   continuousUse: boolean;

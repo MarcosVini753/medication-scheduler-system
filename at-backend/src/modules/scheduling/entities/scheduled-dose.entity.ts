@@ -39,6 +39,9 @@ export class ScheduledDose {
   @Column({ nullable: true })
   weeklyDay?: string;
 
+  @Column({ nullable: true })
+  monthlyRule?: string;
+
   @Column({ type: 'int', nullable: true })
   monthlyDay?: number;
 

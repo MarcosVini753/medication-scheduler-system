@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { UnprocessableEntityException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { DoseUnit } from '../src/common/enums/dose-unit.enum';
 import { GroupCode } from '../src/common/enums/group-code.enum';
@@ -19,6 +20,7 @@ import { SchedulingRulesService } from '../src/modules/scheduling/services/sched
 describe('SchedulingService clinical rules', () => {
   let service: SchedulingService;
   let repository: jest.Mocked<Repository<ScheduledDose>>;
+  let prescriptionRepository: jest.Mocked<Repository<Prescription>>;
 
   beforeEach(() => {
     repository = {
@@ -33,6 +35,10 @@ describe('SchedulingService clinical rules', () => {
       ),
     } as unknown as jest.Mocked<Repository<ScheduledDose>>;
 
+    prescriptionRepository = {
+      findOne: jest.fn(),
+    } as unknown as jest.Mocked<Repository<Prescription>>;
+
     const patientService = {
       getActiveRoutine: jest.fn().mockResolvedValue({
         acordar: '06:00',
@@ -46,6 +52,7 @@ describe('SchedulingService clinical rules', () => {
 
     service = new SchedulingService(
       repository,
+      prescriptionRepository,
       patientService as never,
       new SchedulingRulesService(),
     );
@@ -109,6 +116,22 @@ describe('SchedulingService clinical rules', () => {
       recurrenceType: TreatmentRecurrence.MONTHLY,
       monthlyDay: 8,
       recurrenceLabel: 'Mensal no dia 8',
+    });
+  });
+
+  it('preserves monthlyRule when the monthly recurrence is rule-based', async () => {
+    const result = await buildScheduleResult([
+      buildItem({
+        recurrenceType: TreatmentRecurrence.MONTHLY,
+        monthlyDay: undefined,
+        monthlyRule: 'primeiro dia util',
+      }),
+    ]);
+
+    expect(result.entries[0]).toMatchObject({
+      recurrenceType: TreatmentRecurrence.MONTHLY,
+      monthlyRule: 'primeiro dia util',
+      recurrenceLabel: 'Mensal: primeiro dia util',
     });
   });
 
@@ -198,6 +221,16 @@ describe('SchedulingService clinical rules', () => {
       'Horário definido manualmente.',
       'Horário definido manualmente.',
     ]);
+  });
+
+  it('fails with a domain exception when no formula exists for the requested frequency', async () => {
+    await expect(
+      buildScheduleResult([
+        buildItem({
+          frequency: 99,
+        }),
+      ]),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
   async function buildScheduleResult(

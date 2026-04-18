@@ -27,6 +27,16 @@ type PrescriptionItemLike = {
   painOnly?: boolean;
 };
 
+const VALID_WEEKLY_DAYS = new Set([
+  'SEGUNDA',
+  'TERCA',
+  'QUARTA',
+  'QUINTA',
+  'SEXTA',
+  'SABADO',
+  'DOMINGO',
+]);
+
 @ValidatorConstraint({ name: 'PrescriptionItemClinicalRules', async: false })
 export class PrescriptionItemClinicalRulesValidator
   implements ValidatorConstraintInterface
@@ -189,6 +199,14 @@ function getPrescriptionItemValidationError(
   }
 
   if (
+    recurrenceType === TreatmentRecurrence.WEEKLY &&
+    hasText(item.weeklyDay) &&
+    !VALID_WEEKLY_DAYS.has(item.weeklyDay!.trim().toUpperCase())
+  ) {
+    return 'weeklyDay deve ser um dia valido da semana.';
+  }
+
+  if (
     recurrenceType !== TreatmentRecurrence.MONTHLY &&
     (item.monthlyDay !== undefined || hasText(item.monthlyRule))
   ) {
@@ -283,9 +301,51 @@ function getPrescriptionItemValidationError(
     return 'perDoseOverrides so pode ser informado quando sameDosePerSchedule for false.';
   }
 
+  if (
+    item.sameDosePerSchedule === false &&
+    item.perDoseOverrides &&
+    item.frequency !== undefined &&
+    !hasExpectedDoseLabels(item.perDoseOverrides, item.frequency)
+  ) {
+    return 'perDoseOverrides deve cobrir exatamente as doses D1 até Dn sem repeticao.';
+  }
+
   return undefined;
 }
 
 function hasText(value?: string): boolean {
   return Boolean(value?.trim());
+}
+
+function hasExpectedDoseLabels(
+  perDoseOverrides: unknown[],
+  frequency: number,
+): boolean {
+  const labels = perDoseOverrides.map((override) =>
+    getDoseLabel(override),
+  );
+
+  if (labels.some((label) => !label)) {
+    return false;
+  }
+
+  const actualLabels = new Set(labels as string[]);
+  const expectedLabels = new Set(
+    Array.from({ length: frequency }, (_, index) => `D${index + 1}`),
+  );
+
+  if (actualLabels.size !== expectedLabels.size) {
+    return false;
+  }
+
+  return Array.from(expectedLabels).every((label) => actualLabels.has(label));
+}
+
+function getDoseLabel(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const doseLabel = (value as { doseLabel?: unknown }).doseLabel;
+  return typeof doseLabel === 'string' ? doseLabel : undefined;
 }

@@ -10,6 +10,7 @@ export interface RecurrenceMetadata {
   startDate: string;
   endDate?: string;
   weeklyDay?: string;
+  monthlyRule?: string;
   monthlyDay?: number;
   alternateDaysInterval?: number;
   continuousUse: boolean;
@@ -32,6 +33,7 @@ export function buildRecurrenceMetadata(
       ? undefined
       : calculateEndDate(prescription.startedAt, item.treatmentDays),
     weeklyDay: normalizeWeeklyDay(item.weeklyDay),
+    monthlyRule: normalizeMonthlyRule(item.monthlyRule),
     monthlyDay,
     alternateDaysInterval:
       recurrenceType === TreatmentRecurrence.ALTERNATE_DAYS
@@ -65,6 +67,11 @@ export function validateMonthlyDay(value?: number): number | undefined {
   return value;
 }
 
+export function normalizeMonthlyRule(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 export function formatClinicalRecurrenceLabel(metadata: RecurrenceMetadata): string {
   if (metadata.continuousUse) {
     return 'Uso continuo';
@@ -76,7 +83,13 @@ export function formatClinicalRecurrenceLabel(metadata: RecurrenceMetadata): str
     case TreatmentRecurrence.WEEKLY:
       return metadata.weeklyDay ? `Semanal em ${metadata.weeklyDay}` : 'Semanal';
     case TreatmentRecurrence.MONTHLY:
-      return metadata.monthlyDay ? `Mensal no dia ${metadata.monthlyDay}` : 'Mensal';
+      if (metadata.monthlyDay) {
+        return `Mensal no dia ${metadata.monthlyDay}`;
+      }
+
+      return metadata.monthlyRule
+        ? `Mensal: ${metadata.monthlyRule}`
+        : 'Mensal';
     case TreatmentRecurrence.PRN:
       return metadata.prnReason
         ? `Se necessario: ${formatPrnReasonLabel(metadata.prnReason)}`
