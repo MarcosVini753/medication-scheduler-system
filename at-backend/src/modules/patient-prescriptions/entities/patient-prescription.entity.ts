@@ -16,7 +16,7 @@ export class PatientPrescription {
   @Column({ type: 'date' })
   startedAt: string;
 
-  @Column({ default: 'ACTIVE' })
+  @Column({ type: 'varchar', length: 20, default: 'ACTIVE' })
   status: string;
 
   @OneToMany(() => PatientPrescriptionMedication, (medication) => medication.prescription, {

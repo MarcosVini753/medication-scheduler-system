@@ -130,6 +130,41 @@ describe('SchedulingService clinical rules', () => {
     });
   });
 
+  it('exposes structured time metadata for frontend rendering without inferring anchors', async () => {
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I, {
+          frequencies: [
+            {
+              frequency: 1,
+              steps: [
+                {
+                  doseLabel: 'D1',
+                  anchor: ClinicalAnchor.CAFE,
+                  offsetMinutes: 0,
+                  semanticTag: ClinicalSemanticTag.STANDARD,
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    ]);
+
+    expect(flattenEntries(result)[0]).toMatchObject({
+      timeContext: {
+        anchor: ClinicalAnchor.CAFE,
+        anchorTimeInMinutes: 420,
+        offsetMinutes: 0,
+        semanticTag: ClinicalSemanticTag.STANDARD,
+        originalTimeInMinutes: 420,
+        originalTimeFormatted: '07:00',
+        resolvedTimeInMinutes: 420,
+        resolvedTimeFormatted: '07:00',
+      },
+    });
+  });
+
   it('keeps the same clinical dose across all schedules when sameDosePerSchedule is true', async () => {
     const result = await buildScheduleResult(service, [
       buildPrescriptionMedication({

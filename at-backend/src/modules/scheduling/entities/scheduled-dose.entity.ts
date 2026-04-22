@@ -1,4 +1,8 @@
 import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { ClinicalAnchor } from '../../../common/enums/clinical-anchor.enum';
+import { ClinicalInteractionType } from '../../../common/enums/clinical-interaction-type.enum';
+import { ClinicalResolutionType } from '../../../common/enums/clinical-resolution-type.enum';
+import { ClinicalSemanticTag } from '../../../common/enums/clinical-semantic-tag.enum';
 import { PrnReason } from '../../../common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
 import { PatientPrescriptionMedication } from '../../patient-prescriptions/entities/patient-prescription-medication.entity';
@@ -22,7 +26,7 @@ export class ScheduledDose {
   @Column({ type: 'int' })
   phaseOrder: number;
 
-  @Column()
+  @Column({ type: 'varchar', length: 20 })
   doseLabel: string;
 
   @Column({ type: 'varchar', length: 50, nullable: true })
@@ -64,7 +68,7 @@ export class ScheduledDose {
   @Column({ type: 'varchar', length: 20, nullable: true })
   prnReason?: PrnReason;
 
-  @Column({ type: 'varchar', length: 150, nullable: true })
+  @Column({ type: 'text', nullable: true })
   clinicalInstructionLabel?: string;
 
   @Column({ type: 'int' })
@@ -73,9 +77,51 @@ export class ScheduledDose {
   @Column({ type: 'time' })
   timeFormatted: string;
 
-  @Column({ default: 'ACTIVE' })
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  anchor?: ClinicalAnchor;
+
+  @Column({ type: 'int', nullable: true })
+  anchorTimeInMinutes?: number;
+
+  @Column({ type: 'int', nullable: true })
+  offsetMinutes?: number;
+
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  semanticTag?: ClinicalSemanticTag;
+
+  @Column({ type: 'int' })
+  originalTimeInMinutes: number;
+
+  @Column({ type: 'time' })
+  originalTimeFormatted: string;
+
+  @Column({ type: 'varchar', length: 30, default: 'ACTIVE' })
   status: string;
 
   @Column({ type: 'text', nullable: true })
   note?: string;
+
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  conflictInteractionType?: ClinicalInteractionType;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  conflictResolutionType?: ClinicalResolutionType;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  conflictTriggerMedicationName?: string;
+
+  @Column({ type: 'varchar', length: 60, nullable: true })
+  conflictTriggerGroupCode?: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  conflictTriggerProtocolCode?: string;
+
+  @Column({ type: 'int', nullable: true })
+  conflictRulePriority?: number;
+
+  @Column({ type: 'int', nullable: true })
+  conflictWindowBeforeMinutes?: number;
+
+  @Column({ type: 'int', nullable: true })
+  conflictWindowAfterMinutes?: number;
 }

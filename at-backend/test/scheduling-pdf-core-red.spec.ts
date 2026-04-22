@@ -593,6 +593,40 @@ describe('SchedulingService PDF core rules', () => {
       expect(findEntryByTime(result, 'CALCIO', '22:00')).toBeUndefined();
     });
 
+    it('uses rule priority instead of medication ordering when multiple calcium rules match', async () => {
+      const { service } = createSchedulingService({ routine });
+      const result = await buildScheduleResult(service, [
+        buildCalciumMedication(),
+        buildCalciumSensitiveMedication(
+          'AAA SHIFT',
+          '21:00',
+          'Bloqueador alfabeticamente primeiro.',
+          {
+            resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+            priority: 10,
+          },
+        ),
+        buildCalciumSensitiveMedication(
+          'ZZZ MANUAL',
+          '21:00',
+          'Bloqueador alfabeticamente depois, mas clinicamente prioritario.',
+          {
+            resolutionType: ClinicalResolutionType.REQUIRE_MANUAL_ADJUSTMENT,
+            priority: 100,
+          },
+        ),
+      ]);
+
+      const calciumAt21 = findEntryByTime(result, 'CALCIO', '21:00');
+      expect(calciumAt21).toBeDefined();
+      expect(calciumAt21?.status).toBe(ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED);
+      expect(calciumAt21?.conflict).toMatchObject({
+        triggerMedicationName: 'ZZZ MANUAL',
+        resolutionType: ClinicalResolutionType.REQUIRE_MANUAL_ADJUSTMENT,
+        rulePriority: 100,
+      });
+    });
+
     it('is deterministic with multiple blockers and marks manual adjustment at the first persistent conflict slot', async () => {
       const { service } = createSchedulingService({ routine });
       const result = await buildScheduleResult(service, [

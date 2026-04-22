@@ -18,11 +18,20 @@ export class ClinicalProtocol {
   @Column({ type: 'text' })
   description: string;
 
+  @Column({ nullable: true })
+  subgroupCode?: string;
+
   @Column({ type: 'int', default: 0 })
   priority: number;
 
   @Column({ default: false })
   isDefault: boolean;
+
+  @Column({ default: true })
+  active: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  clinicalNotes?: string;
 
   @ManyToOne(() => ClinicalMedication, (medication) => medication.protocols, {
     eager: false,

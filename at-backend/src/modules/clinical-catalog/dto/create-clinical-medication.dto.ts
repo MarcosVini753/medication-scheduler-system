@@ -14,6 +14,8 @@ import { ClinicalAnchor } from '../../../common/enums/clinical-anchor.enum';
 import { ClinicalInteractionType } from '../../../common/enums/clinical-interaction-type.enum';
 import { ClinicalResolutionType } from '../../../common/enums/clinical-resolution-type.enum';
 import { ClinicalSemanticTag } from '../../../common/enums/clinical-semantic-tag.enum';
+import { DoseUnit } from '../../../common/enums/dose-unit.enum';
+import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
 
 export class CreateClinicalProtocolStepDto {
   @IsString()
@@ -36,6 +38,23 @@ export class CreateClinicalProtocolFrequencyDto {
   @IsInt()
   @Min(1)
   frequency: number;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(TreatmentRecurrence, { each: true })
+  allowedRecurrenceTypes?: TreatmentRecurrence[];
+
+  @IsOptional()
+  @IsBoolean()
+  allowsPrn?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowsVariableDoseBySchedule?: boolean;
 
   @IsArray()
   @ArrayMinSize(1)
@@ -69,6 +88,23 @@ export class CreateClinicalInteractionRuleDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
+  windowBeforeMinutes?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  windowAfterMinutes?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(ClinicalSemanticTag, { each: true })
+  applicableSemanticTags?: ClinicalSemanticTag[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   priority?: number;
 }
 
@@ -86,6 +122,10 @@ export class CreateClinicalProtocolDto {
   groupCode: string;
 
   @IsOptional()
+  @IsString()
+  subgroupCode?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -94,6 +134,14 @@ export class CreateClinicalProtocolDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsString()
+  clinicalNotes?: string;
 
   @IsArray()
   @ArrayMinSize(1)
@@ -119,11 +167,47 @@ export class CreateClinicalMedicationDto {
   @IsString()
   presentation: string;
 
+  @IsOptional()
+  @IsString()
+  pharmaceuticalForm?: string;
+
   @IsString()
   administrationRoute: string;
 
   @IsString()
   usageInstructions: string;
+
+  @IsOptional()
+  @IsString()
+  diluentType?: string;
+
+  @IsOptional()
+  @IsEnum(DoseUnit)
+  defaultAdministrationUnit?: DoseUnit;
+
+  @IsOptional()
+  @IsBoolean()
+  supportsManualAdjustment?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isOphthalmic?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isOtic?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isContraceptiveMonthly?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresGlycemiaScale?: boolean;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 
   @IsOptional()
   @IsBoolean()

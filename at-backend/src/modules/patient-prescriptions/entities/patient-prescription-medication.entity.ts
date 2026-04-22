@@ -17,10 +17,10 @@ export class PatientPrescriptionMedication {
   })
   prescription: PatientPrescription;
 
-  @Column()
+  @Column({ type: 'uuid' })
   sourceClinicalMedicationId: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   sourceProtocolId: string;
 
   @Column({ type: 'simple-json' })

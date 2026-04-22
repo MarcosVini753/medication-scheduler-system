@@ -1,11 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { GroupCode } from '../../common/enums/group-code.enum';
-import { ClinicalAnchor } from '../../common/enums/clinical-anchor.enum';
 import { ClinicalInteractionType } from '../../common/enums/clinical-interaction-type.enum';
 import { ClinicalResolutionType } from '../../common/enums/clinical-resolution-type.enum';
 import { ClinicalSemanticTag } from '../../common/enums/clinical-semantic-tag.enum';
+import { GroupCode } from '../../common/enums/group-code.enum';
 import {
   CreateClinicalMedicationDto,
   CreateClinicalProtocolDto,
@@ -34,8 +33,17 @@ export class ClinicalCatalogService {
       commercialName: dto.commercialName,
       activePrinciple: dto.activePrinciple,
       presentation: dto.presentation,
+      pharmaceuticalForm: dto.pharmaceuticalForm,
       administrationRoute: dto.administrationRoute,
       usageInstructions: dto.usageInstructions,
+      diluentType: dto.diluentType,
+      defaultAdministrationUnit: dto.defaultAdministrationUnit,
+      supportsManualAdjustment: dto.supportsManualAdjustment ?? false,
+      isOphthalmic: dto.isOphthalmic ?? false,
+      isOtic: dto.isOtic ?? false,
+      isContraceptiveMonthly: dto.isContraceptiveMonthly ?? false,
+      requiresGlycemiaScale: dto.requiresGlycemiaScale ?? false,
+      notes: dto.notes,
       isDefault: dto.isDefault ?? false,
       protocols: dto.protocols.map((protocolDto) =>
         this.buildProtocol(protocolDto, groupsByCode),
@@ -150,12 +158,20 @@ export class ClinicalCatalogService {
     protocol.code = dto.code;
     protocol.name = dto.name;
     protocol.description = dto.description;
+    protocol.subgroupCode = dto.subgroupCode;
     protocol.priority = dto.priority ?? 0;
     protocol.isDefault = dto.isDefault ?? false;
+    protocol.active = dto.active ?? true;
+    protocol.clinicalNotes = dto.clinicalNotes;
     protocol.group = group;
     protocol.frequencies = dto.frequencies.map((frequencyDto) => {
       const frequency = new ClinicalProtocolFrequency();
       frequency.frequency = frequencyDto.frequency;
+      frequency.label = frequencyDto.label;
+      frequency.allowedRecurrenceTypes = frequencyDto.allowedRecurrenceTypes;
+      frequency.allowsPrn = frequencyDto.allowsPrn ?? false;
+      frequency.allowsVariableDoseBySchedule =
+        frequencyDto.allowsVariableDoseBySchedule ?? false;
       frequency.steps = frequencyDto.steps.map((stepDto) => {
         const step = new ClinicalProtocolStep();
         step.doseLabel = stepDto.doseLabel;
@@ -175,6 +191,9 @@ export class ClinicalCatalogService {
       rule.resolutionType =
         ruleDto.resolutionType ?? ClinicalResolutionType.INACTIVATE_SOURCE;
       rule.windowMinutes = ruleDto.windowMinutes;
+      rule.windowBeforeMinutes = ruleDto.windowBeforeMinutes ?? ruleDto.windowMinutes;
+      rule.windowAfterMinutes = ruleDto.windowAfterMinutes ?? ruleDto.windowMinutes;
+      rule.applicableSemanticTags = ruleDto.applicableSemanticTags;
       rule.priority = ruleDto.priority ?? 0;
       return rule;
     });

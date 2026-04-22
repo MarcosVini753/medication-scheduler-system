@@ -12,7 +12,11 @@ import { PatientPrescriptionMedication } from '../patient-prescriptions/entities
 import { PatientPrescriptionPhase } from '../patient-prescriptions/entities/patient-prescription-phase.entity';
 import { PatientPrescription } from '../patient-prescriptions/entities/patient-prescription.entity';
 import { ConflictResolutionService, ConflictEntryLike } from './services/conflict-resolution.service';
-import { ScheduledPhaseDto, SchedulingResultDto, ScheduleEntryDto } from './dto/schedule-response.dto';
+import {
+  ScheduledPhaseDto,
+  SchedulingResultDto,
+  ScheduleEntryDto,
+} from './dto/schedule-response.dto';
 import { ScheduledDose } from './entities/scheduled-dose.entity';
 import { SchedulingRulesService } from './services/scheduling-rules.service';
 
@@ -24,6 +28,7 @@ interface WorkingEntry extends ScheduleEntryDto, ConflictEntryLike {
   sourceClinicalMedicationId: string;
   sourceProtocolId: string;
   phaseOrder: number;
+  protocolPriority: number;
 }
 
 @Injectable()
@@ -48,6 +53,11 @@ export class SchedulingService {
     entries = entries.map((entry) => ({
       ...entry,
       timeFormatted: minutesToHhmm(entry.timeInMinutes),
+      timeContext: {
+        ...entry.timeContext,
+        resolvedTimeInMinutes: entry.timeInMinutes,
+        resolvedTimeFormatted: minutesToHhmm(entry.timeInMinutes),
+      },
     }));
     entries = this.sortEntries(entries);
 
@@ -149,6 +159,9 @@ export class SchedulingService {
           `D${index + 1}`,
           hhmmToMinutes(time),
           ClinicalSemanticTag.STANDARD,
+          ClinicalAnchor.MANUAL,
+          hhmmToMinutes(time),
+          0,
           phaseWindow,
           'Horário definido manualmente.',
         ),
@@ -168,6 +181,9 @@ export class SchedulingService {
         step.doseLabel,
         anchors[step.anchor] + step.offsetMinutes,
         step.semanticTag,
+        step.anchor,
+        anchors[step.anchor],
+        step.offsetMinutes,
         phaseWindow,
       ),
     );
@@ -180,6 +196,9 @@ export class SchedulingService {
     doseLabel: string,
     timeInMinutes: number,
     semanticTag: ClinicalSemanticTag,
+    anchor: ClinicalAnchor,
+    anchorTimeInMinutes: number,
+    offsetMinutes: number,
     phaseWindow: { startDate: string; endDate?: string },
     note?: string,
   ): WorkingEntry {
@@ -191,6 +210,7 @@ export class SchedulingService {
       sourceClinicalMedicationId: medication.sourceClinicalMedicationId,
       sourceProtocolId: medication.sourceProtocolId,
       phaseOrder: phase.phaseOrder,
+      protocolPriority: medication.protocolSnapshot.priority,
       medicationName:
         medication.medicationSnapshot.commercialName ??
         medication.medicationSnapshot.activePrinciple,
@@ -222,6 +242,16 @@ export class SchedulingService {
           : undefined,
       timeInMinutes,
       timeFormatted: minutesToHhmm(timeInMinutes),
+      timeContext: {
+        anchor,
+        anchorTimeInMinutes,
+        offsetMinutes,
+        semanticTag,
+        originalTimeInMinutes: timeInMinutes,
+        originalTimeFormatted: minutesToHhmm(timeInMinutes),
+        resolvedTimeInMinutes: timeInMinutes,
+        resolvedTimeFormatted: minutesToHhmm(timeInMinutes),
+      },
       status: ScheduleStatus.ACTIVE,
       note,
     };
@@ -259,16 +289,7 @@ export class SchedulingService {
     anchors: ScheduleAnchors,
   ): WorkingEntry[] {
     const normalized = entries.map((entry) => ({ ...entry }));
-    this.conflictResolutionService.applySaltRule(normalized);
-    this.conflictResolutionService.applyCalciumRule(normalized);
-    this.conflictResolutionService.applySucralfateRule(normalized, {
-      ACORDAR: anchors[ClinicalAnchor.ACORDAR],
-      CAFE: anchors[ClinicalAnchor.CAFE],
-      ALMOCO: anchors[ClinicalAnchor.ALMOCO],
-      LANCHE: anchors[ClinicalAnchor.LANCHE],
-      JANTAR: anchors[ClinicalAnchor.JANTAR],
-      DORMIR: anchors[ClinicalAnchor.DORMIR],
-    });
+    this.conflictResolutionService.apply(normalized, anchors);
     return normalized;
   }
 
@@ -317,8 +338,22 @@ export class SchedulingService {
           clinicalInstructionLabel: entry.clinicalInstructionLabel,
           timeInMinutes: entry.timeInMinutes,
           timeFormatted: entry.timeFormatted,
+          anchor: entry.timeContext.anchor,
+          anchorTimeInMinutes: entry.timeContext.anchorTimeInMinutes,
+          offsetMinutes: entry.timeContext.offsetMinutes,
+          semanticTag: entry.timeContext.semanticTag,
+          originalTimeInMinutes: entry.timeContext.originalTimeInMinutes,
+          originalTimeFormatted: entry.timeContext.originalTimeFormatted,
           status: entry.status,
           note: entry.note,
+          conflictInteractionType: entry.conflict?.interactionType,
+          conflictResolutionType: entry.conflict?.resolutionType,
+          conflictTriggerMedicationName: entry.conflict?.triggerMedicationName,
+          conflictTriggerGroupCode: entry.conflict?.triggerGroupCode,
+          conflictTriggerProtocolCode: entry.conflict?.triggerProtocolCode,
+          conflictRulePriority: entry.conflict?.rulePriority,
+          conflictWindowBeforeMinutes: entry.conflict?.windowBeforeMinutes,
+          conflictWindowAfterMinutes: entry.conflict?.windowAfterMinutes,
         }),
       ),
     );
@@ -346,10 +381,23 @@ export class SchedulingService {
           medication.medicationSnapshot.activePrinciple,
         activePrinciple: medication.medicationSnapshot.activePrinciple,
         presentation: medication.medicationSnapshot.presentation,
+        pharmaceuticalForm: medication.medicationSnapshot.pharmaceuticalForm,
         administrationRoute: medication.medicationSnapshot.administrationRoute,
         usageInstructions: medication.medicationSnapshot.usageInstructions,
+        diluentType: medication.medicationSnapshot.diluentType,
+        defaultAdministrationUnit: medication.medicationSnapshot.defaultAdministrationUnit,
+        supportsManualAdjustment: medication.medicationSnapshot.supportsManualAdjustment,
+        isOphthalmic: medication.medicationSnapshot.isOphthalmic,
+        isOtic: medication.medicationSnapshot.isOtic,
+        isContraceptiveMonthly: medication.medicationSnapshot.isContraceptiveMonthly,
+        requiresGlycemiaScale: medication.medicationSnapshot.requiresGlycemiaScale,
+        notes: medication.medicationSnapshot.notes,
         groupCode: medication.protocolSnapshot.groupCode,
+        subgroupCode: medication.protocolSnapshot.subgroupCode,
         protocolCode: medication.protocolSnapshot.code,
+        protocolName: medication.protocolSnapshot.name,
+        protocolDescription: medication.protocolSnapshot.description,
+        clinicalNotes: medication.protocolSnapshot.clinicalNotes,
         phases: this.mapPhases(medication, doses),
       })),
     };
@@ -393,8 +441,31 @@ export class SchedulingService {
             clinicalInstructionLabel: dose.clinicalInstructionLabel,
             timeInMinutes: dose.timeInMinutes,
             timeFormatted: dose.timeFormatted,
+            timeContext: {
+              anchor: dose.anchor,
+              anchorTimeInMinutes: dose.anchorTimeInMinutes,
+              offsetMinutes: dose.offsetMinutes,
+              semanticTag: dose.semanticTag,
+              originalTimeInMinutes: dose.originalTimeInMinutes,
+              originalTimeFormatted: dose.originalTimeFormatted,
+              resolvedTimeInMinutes: dose.timeInMinutes,
+              resolvedTimeFormatted: dose.timeFormatted,
+            },
             status: dose.status,
             note: dose.note,
+            conflict:
+              dose.conflictInteractionType || dose.conflictResolutionType
+                ? {
+                    interactionType: dose.conflictInteractionType,
+                    resolutionType: dose.conflictResolutionType,
+                    triggerMedicationName: dose.conflictTriggerMedicationName,
+                    triggerGroupCode: dose.conflictTriggerGroupCode,
+                    triggerProtocolCode: dose.conflictTriggerProtocolCode,
+                    rulePriority: dose.conflictRulePriority,
+                    windowBeforeMinutes: dose.conflictWindowBeforeMinutes,
+                    windowAfterMinutes: dose.conflictWindowAfterMinutes,
+                  }
+                : undefined,
           }));
 
         return {

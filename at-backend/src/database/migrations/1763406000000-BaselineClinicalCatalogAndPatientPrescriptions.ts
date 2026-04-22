@@ -21,8 +21,17 @@ export class BaselineClinicalCatalogAndPatientPrescriptions1763406000000
         "commercialName" character varying(255),
         "activePrinciple" character varying(255) NOT NULL,
         "presentation" character varying(255) NOT NULL,
+        "pharmaceuticalForm" character varying(255),
         "administrationRoute" character varying(255) NOT NULL,
         "usageInstructions" text NOT NULL,
+        "diluentType" character varying(255),
+        "defaultAdministrationUnit" character varying(30),
+        "supportsManualAdjustment" boolean NOT NULL DEFAULT false,
+        "isOphthalmic" boolean NOT NULL DEFAULT false,
+        "isOtic" boolean NOT NULL DEFAULT false,
+        "isContraceptiveMonthly" boolean NOT NULL DEFAULT false,
+        "requiresGlycemiaScale" boolean NOT NULL DEFAULT false,
+        "notes" text,
         "isDefault" boolean NOT NULL DEFAULT false
       )
     `);
@@ -32,8 +41,11 @@ export class BaselineClinicalCatalogAndPatientPrescriptions1763406000000
         "code" character varying(100) NOT NULL UNIQUE,
         "name" character varying(255) NOT NULL,
         "description" text NOT NULL,
+        "subgroupCode" character varying(100),
         "priority" integer NOT NULL DEFAULT 0,
         "isDefault" boolean NOT NULL DEFAULT false,
+        "active" boolean NOT NULL DEFAULT true,
+        "clinicalNotes" text,
         "medicationId" uuid NOT NULL REFERENCES "clinical_medications"("id") ON DELETE CASCADE,
         "groupId" uuid NOT NULL REFERENCES "clinical_groups"("id") ON DELETE RESTRICT
       )
@@ -42,6 +54,10 @@ export class BaselineClinicalCatalogAndPatientPrescriptions1763406000000
       CREATE TABLE IF NOT EXISTS "clinical_protocol_frequencies" (
         "id" uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
         "frequency" integer NOT NULL,
+        "label" character varying(255),
+        "allowedRecurrenceTypes" text,
+        "allowsPrn" boolean NOT NULL DEFAULT false,
+        "allowsVariableDoseBySchedule" boolean NOT NULL DEFAULT false,
         "protocolId" uuid NOT NULL REFERENCES "clinical_protocols"("id") ON DELETE CASCADE
       )
     `);
@@ -63,6 +79,9 @@ export class BaselineClinicalCatalogAndPatientPrescriptions1763406000000
         "targetProtocolCode" character varying(100),
         "resolutionType" character varying(60) NOT NULL,
         "windowMinutes" integer,
+        "windowBeforeMinutes" integer,
+        "windowAfterMinutes" integer,
+        "applicableSemanticTags" text,
         "priority" integer NOT NULL DEFAULT 0,
         "protocolId" uuid NOT NULL REFERENCES "clinical_protocols"("id") ON DELETE CASCADE
       )
@@ -96,7 +115,7 @@ export class BaselineClinicalCatalogAndPatientPrescriptions1763406000000
         "doseValue" character varying(50),
         "doseUnit" character varying(30),
         "perDoseOverrides" text,
-        "recurrenceType" character varying(30) NOT NULL,
+        "recurrenceType" character varying(30) NOT NULL DEFAULT 'DAILY',
         "alternateDaysInterval" integer,
         "weeklyDay" character varying(20),
         "monthlyRule" character varying(100),
@@ -130,8 +149,22 @@ export class BaselineClinicalCatalogAndPatientPrescriptions1763406000000
         "clinicalInstructionLabel" text,
         "timeInMinutes" integer NOT NULL,
         "timeFormatted" time NOT NULL,
+        "anchor" character varying(30),
+        "anchorTimeInMinutes" integer,
+        "offsetMinutes" integer,
+        "semanticTag" character varying(40),
+        "originalTimeInMinutes" integer NOT NULL,
+        "originalTimeFormatted" time NOT NULL,
         "status" character varying(30) NOT NULL,
         "note" text,
+        "conflictInteractionType" character varying(40),
+        "conflictResolutionType" character varying(50),
+        "conflictTriggerMedicationName" character varying(255),
+        "conflictTriggerGroupCode" character varying(60),
+        "conflictTriggerProtocolCode" character varying(100),
+        "conflictRulePriority" integer,
+        "conflictWindowBeforeMinutes" integer,
+        "conflictWindowAfterMinutes" integer,
         "prescriptionId" uuid NOT NULL REFERENCES "patient_prescriptions"("id") ON DELETE CASCADE,
         "prescriptionMedicationId" uuid NOT NULL REFERENCES "patient_prescription_medications"("id") ON DELETE CASCADE,
         "phaseId" uuid NOT NULL REFERENCES "patient_prescription_phases"("id") ON DELETE CASCADE

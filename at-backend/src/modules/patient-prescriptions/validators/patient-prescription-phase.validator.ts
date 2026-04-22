@@ -121,6 +121,15 @@ function getPhaseValidationError(phase: PhaseLike): string | undefined {
     return 'manualTimes e obrigatorio quando manualAdjustmentEnabled for true.';
   }
 
+  if (
+    phase.manualAdjustmentEnabled &&
+    phase.manualTimes &&
+    phase.frequency !== undefined &&
+    phase.manualTimes.length !== phase.frequency
+  ) {
+    return 'manualTimes deve corresponder exatamente a frequencia da fase.';
+  }
+
   return undefined;
 }
 

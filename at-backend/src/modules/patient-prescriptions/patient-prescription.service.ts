@@ -49,6 +49,7 @@ export class PatientPrescriptionService {
             );
           }
 
+          this.ensureSequentialPhaseOrders(medicationDto.phases);
           this.ensureProtocolSupportsPhases(protocolSnapshotFromEntity(protocol), medicationDto.phases);
 
           const medication = prescriptionMedicationRepository.create({
@@ -127,6 +128,19 @@ export class PatientPrescriptionService {
       }
     });
   }
+
+  private ensureSequentialPhaseOrders(
+    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+  ): void {
+    const sortedOrders = [...phases].map((phase) => phase.phaseOrder).sort((a, b) => a - b);
+    const expectedOrders = Array.from({ length: sortedOrders.length }, (_, index) => index + 1);
+    const isSequential = sortedOrders.every((order, index) => order === expectedOrders[index]);
+    if (!isSequential) {
+      throw new NotFoundException(
+        'As fases terapêuticas devem usar phaseOrder sequencial, sem lacunas nem repetição.',
+      );
+    }
+  }
 }
 
 function medicationSnapshotFromEntity(
@@ -137,8 +151,17 @@ function medicationSnapshotFromEntity(
     commercialName: medication.commercialName,
     activePrinciple: medication.activePrinciple,
     presentation: medication.presentation,
+    pharmaceuticalForm: medication.pharmaceuticalForm,
     administrationRoute: medication.administrationRoute,
     usageInstructions: medication.usageInstructions,
+    diluentType: medication.diluentType,
+    defaultAdministrationUnit: medication.defaultAdministrationUnit,
+    supportsManualAdjustment: medication.supportsManualAdjustment,
+    isOphthalmic: medication.isOphthalmic,
+    isOtic: medication.isOtic,
+    isContraceptiveMonthly: medication.isContraceptiveMonthly,
+    requiresGlycemiaScale: medication.requiresGlycemiaScale,
+    notes: medication.notes,
   };
 }
 
@@ -151,10 +174,17 @@ function protocolSnapshotFromEntity(
     name: protocol.name,
     description: protocol.description,
     groupCode: protocol.group.code,
+    subgroupCode: protocol.subgroupCode,
     priority: protocol.priority,
     isDefault: protocol.isDefault,
+    active: protocol.active,
+    clinicalNotes: protocol.clinicalNotes,
     frequencies: protocol.frequencies.map((frequency) => ({
       frequency: frequency.frequency,
+      label: frequency.label,
+      allowedRecurrenceTypes: frequency.allowedRecurrenceTypes,
+      allowsPrn: frequency.allowsPrn,
+      allowsVariableDoseBySchedule: frequency.allowsVariableDoseBySchedule,
       steps: frequency.steps.map((step) => ({
         doseLabel: step.doseLabel,
         anchor: step.anchor,
@@ -174,6 +204,9 @@ function interactionRulesSnapshotFromEntity(
     targetProtocolCode: rule.targetProtocolCode,
     resolutionType: rule.resolutionType,
     windowMinutes: rule.windowMinutes,
+    windowBeforeMinutes: rule.windowBeforeMinutes ?? rule.windowMinutes,
+    windowAfterMinutes: rule.windowAfterMinutes ?? rule.windowMinutes,
+    applicableSemanticTags: rule.applicableSemanticTags,
     priority: rule.priority,
   }));
 }
