@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { UnprocessableEntityException } from '@nestjs/common';
+import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ClinicalAnchor } from '../src/common/enums/clinical-anchor.enum';
 import { ClinicalInteractionType } from '../src/common/enums/clinical-interaction-type.enum';
 import { ClinicalResolutionType } from '../src/common/enums/clinical-resolution-type.enum';
@@ -1716,11 +1716,28 @@ describe('PatientPrescriptionService', () => {
     };
   }
 
-  function buildClinicalMedicationForUpdate(
-    clinicalMedicationId: string,
-    protocolId: string,
-    groupCode: GroupCode,
-  ) {
+  function buildClinicalMedicationForUpdate(clinicalMedicationId: string) {
+    const baseProtocolsByMedication: Record<
+      string,
+      Array<{ id: string; groupCode: GroupCode; code: string }>
+    > = {
+      'clinical-1': [
+        { id: 'protocol-1', groupCode: GroupCode.GROUP_I, code: 'PROTOCOLO-protocol-1' },
+        {
+          id: 'protocol-1-alt',
+          groupCode: GroupCode.GROUP_III,
+          code: 'PROTOCOLO-protocol-1-alt',
+        },
+      ],
+      'clinical-2': [
+        { id: 'protocol-2', groupCode: GroupCode.GROUP_II, code: 'PROTOCOLO-protocol-2' },
+      ],
+    };
+
+    const protocols = baseProtocolsByMedication[clinicalMedicationId] ?? [
+      { id: 'protocol-1', groupCode: GroupCode.GROUP_I, code: 'PROTOCOLO-protocol-1' },
+    ];
+
     return {
       id: clinicalMedicationId,
       commercialName: `MED-${clinicalMedicationId}`,
@@ -1729,15 +1746,14 @@ describe('PatientPrescriptionService', () => {
       administrationRoute: 'VO',
       usageInstructions: 'Conforme prescricao.',
       supportsManualAdjustment: true,
-      protocols: [
-        {
-          id: protocolId,
-          code: `PROTOCOLO-${protocolId}`,
-          name: `Protocolo ${protocolId}`,
+      protocols: protocols.map((protocol) => ({
+          id: protocol.id,
+          code: protocol.code,
+          name: `Protocolo ${protocol.id}`,
           description: 'Protocolo update',
           priority: 0,
           isDefault: true,
-          group: { code: groupCode },
+          group: { code: protocol.groupCode },
           frequencies: [
             {
               frequency: 1,
@@ -1752,8 +1768,7 @@ describe('PatientPrescriptionService', () => {
             },
           ],
           interactionRules: [],
-        },
-      ],
+        })),
     };
   }
 
@@ -1876,17 +1891,9 @@ describe('PatientPrescriptionService', () => {
     const clinicalCatalogService = {
       findMedicationById: jest.fn(async (clinicalMedicationId: string) => {
         if (clinicalMedicationId === 'clinical-2') {
-          return buildClinicalMedicationForUpdate(
-            'clinical-2',
-            'protocol-2',
-            GroupCode.GROUP_II,
-          );
+          return buildClinicalMedicationForUpdate('clinical-2');
         }
-        return buildClinicalMedicationForUpdate(
-          'clinical-1',
-          'protocol-1',
-          GroupCode.GROUP_I,
-        );
+        return buildClinicalMedicationForUpdate('clinical-1');
       }),
     };
 
@@ -1929,6 +1936,54 @@ describe('PatientPrescriptionService', () => {
     expect(phases.map((phase) => phase.phaseOrder)).toEqual([1, 2]);
     expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ prescriptionId: 'rx-1', medicationCount: 1 });
+  });
+
+  it('updates startedAt and recalculates schedule', async () => {
+    const { service, state, schedulingService } = createUpdateServiceHarness();
+
+    const result = await service.updatePrescription('rx-1', {
+      startedAt: '2026-06-01',
+    } as never);
+
+    expect(state.prescription.startedAt).toBe('2026-06-01');
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalledTimes(1);
+    expect(schedulingService.buildAndPersistSchedule.mock.calls[0][0].startedAt).toBe(
+      '2026-06-01',
+    );
+    expect(result).toEqual({ prescriptionId: 'rx-1', medicationCount: 1 });
+  });
+
+  it('allows swapping protocolId on an existing prescription medication', async () => {
+    const { service, state } = createUpdateServiceHarness();
+
+    await service.updatePrescription('rx-1', {
+      updateMedications: [
+        {
+          prescriptionMedicationId: 'med-1',
+          protocolId: 'protocol-1-alt',
+        },
+      ],
+    } as never);
+
+    const medication = state.prescription.medications[0];
+    expect(medication.sourceProtocolId).toBe('protocol-1-alt');
+    expect(medication.protocolSnapshot.id).toBe('protocol-1-alt');
+    expect(medication.protocolSnapshot.code).toBe('PROTOCOLO-protocol-1-alt');
+  });
+
+  it('rejects protocol swap when protocolId is not available for the medication', async () => {
+    const { service } = createUpdateServiceHarness();
+
+    await expect(
+      service.updatePrescription('rx-1', {
+        updateMedications: [
+          {
+            prescriptionMedicationId: 'med-1',
+            protocolId: 'protocol-inexistente',
+          },
+        ],
+      } as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('updates an existing phase by phaseId and keeps sequential order', async () => {

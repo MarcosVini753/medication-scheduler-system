@@ -271,6 +271,7 @@ class MedicationUpdateHasActionValidator implements ValidatorConstraintInterface
   validate(value: unknown): boolean {
     const medication = value as UpdatePatientPrescriptionMedicationOperationDto;
     return (
+      Boolean(medication.protocolId) ||
       Boolean(medication.replacePhases?.length) ||
       Boolean(medication.updatePhases?.length) ||
       Boolean(medication.removePhaseIds?.length)
@@ -278,7 +279,7 @@ class MedicationUpdateHasActionValidator implements ValidatorConstraintInterface
   }
 
   defaultMessage(): string {
-    return 'Cada item de updateMedications deve informar replacePhases, updatePhases ou removePhaseIds.';
+    return 'Cada item de updateMedications deve informar protocolId, replacePhases, updatePhases ou removePhaseIds.';
   }
 }
 
@@ -288,6 +289,10 @@ export class UpdatePatientPrescriptionMedicationOperationDto {
 
   @IsUUID()
   prescriptionMedicationId: string;
+
+  @IsOptional()
+  @IsUUID()
+  protocolId?: string;
 
   @IsOptional()
   @IsArray()
@@ -315,6 +320,7 @@ class UpdatePrescriptionHasOperationValidator implements ValidatorConstraintInte
   validate(value: unknown): boolean {
     const dto = value as UpdatePatientPrescriptionDto;
     return (
+      Boolean(dto.startedAt) ||
       Boolean(dto.addMedications?.length) ||
       Boolean(dto.updateMedications?.length) ||
       Boolean(dto.removeMedicationIds?.length)
@@ -329,6 +335,10 @@ class UpdatePrescriptionHasOperationValidator implements ValidatorConstraintInte
 export class UpdatePatientPrescriptionDto {
   @Validate(UpdatePrescriptionHasOperationValidator)
   private readonly hasOperationValidation: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  startedAt?: string;
 
   @IsOptional()
   @IsArray()

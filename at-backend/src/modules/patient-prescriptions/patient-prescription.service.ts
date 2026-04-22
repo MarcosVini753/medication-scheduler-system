@@ -232,6 +232,9 @@ export class PatientPrescriptionService {
         prescriptionRepository,
       );
       this.ensureUpdatePayloadHasOperation(dto);
+      if (dto.startedAt !== undefined) {
+        prescription.startedAt = dto.startedAt;
+      }
 
       const medicationById = new Map(
         prescription.medications.map((medication) => [medication.id, medication]),
@@ -285,6 +288,8 @@ export class PatientPrescriptionService {
             `Prescrição ${prescriptionId}: prescriptionMedicationId ${medicationOperation.prescriptionMedicationId} não encontrado.`,
           );
         }
+
+        await this.applyMedicationProtocolUpdateIfNeeded(medication, medicationOperation.protocolId);
 
         if (medicationOperation.replacePhases?.length) {
           if (medication.phases.length) {
@@ -417,9 +422,14 @@ export class PatientPrescriptionService {
   }
 
   private ensureUpdatePayloadHasOperation(dto: UpdatePatientPrescriptionDto): void {
-    if (!dto.addMedications?.length && !dto.updateMedications?.length && !dto.removeMedicationIds?.length) {
+    if (
+      dto.startedAt === undefined &&
+      !dto.addMedications?.length &&
+      !dto.updateMedications?.length &&
+      !dto.removeMedicationIds?.length
+    ) {
       throw new UnprocessableEntityException(
-        'Informe ao menos uma operação: addMedications, updateMedications ou removeMedicationIds.',
+        'Informe ao menos uma operação: startedAt, addMedications, updateMedications ou removeMedicationIds.',
       );
     }
   }
@@ -429,12 +439,13 @@ export class PatientPrescriptionService {
     prescriptionId: string,
   ): void {
     if (
+      !medicationOperation.protocolId &&
       !medicationOperation.replacePhases?.length &&
       !medicationOperation.updatePhases?.length &&
       !medicationOperation.removePhaseIds?.length
     ) {
       throw new UnprocessableEntityException(
-        `Prescrição ${prescriptionId}: o medicamento ${medicationOperation.prescriptionMedicationId} deve informar replacePhases, updatePhases ou removePhaseIds.`,
+        `Prescrição ${prescriptionId}: o medicamento ${medicationOperation.prescriptionMedicationId} deve informar protocolId, replacePhases, updatePhases ou removePhaseIds.`,
       );
     }
 
@@ -557,6 +568,29 @@ export class PatientPrescriptionService {
       isContraceptiveMonthly: snapshot.isContraceptiveMonthly,
       supportsManualAdjustment: snapshot.supportsManualAdjustment,
     };
+  }
+
+  private async applyMedicationProtocolUpdateIfNeeded(
+    medication: PatientPrescriptionMedication,
+    protocolId?: string,
+  ): Promise<void> {
+    if (!protocolId || protocolId === medication.sourceProtocolId) {
+      return;
+    }
+
+    const clinicalMedication = await this.clinicalCatalogService.findMedicationById(
+      medication.sourceClinicalMedicationId,
+    );
+    const protocol = clinicalMedication.protocols.find((item) => item.id === protocolId);
+    if (!protocol) {
+      throw new NotFoundException(
+        'Protocolo clínico não encontrado para o medicamento informado.',
+      );
+    }
+
+    medication.sourceProtocolId = protocol.id;
+    medication.protocolSnapshot = protocolSnapshotFromEntity(protocol);
+    medication.interactionRulesSnapshot = interactionRulesSnapshotFromEntity(protocol);
   }
 
   private async buildMedicationFromAddDto(
