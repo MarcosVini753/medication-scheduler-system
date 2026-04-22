@@ -223,6 +223,19 @@ describe('PatientPrescriptionService', () => {
     ];
   }
 
+  async function expectDomainErrorMessage(
+    pending: Promise<unknown>,
+    expectedMessage: string,
+  ) {
+    try {
+      await pending;
+      throw new Error('Expected UnprocessableEntityException to be thrown.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnprocessableEntityException);
+      expect((error as Error).message).toContain(expectedMessage);
+    }
+  }
+
   it('creates a patient prescription from clinicalMedicationId and protocolId with full snapshots', async () => {
     const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
       createService();
@@ -1450,5 +1463,181 @@ describe('PatientPrescriptionService', () => {
         ],
       }),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('accepts manualAdjustmentEnabled=true when medication supports manual adjustment', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      supportsManualAdjustment: true,
+    });
+    mockLoadedPrescriptionForLaterality(prescriptionRepository, {
+      manualAdjustmentEnabled: true,
+      manualTimes: ['08:00'],
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                manualAdjustmentEnabled: true,
+                manualTimes: ['08:00'],
+              }),
+            ],
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+  });
+
+  it('rejects manualAdjustmentEnabled=true when medication does not support manual adjustment with detailed message', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      supportsManualAdjustment: false,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                manualAdjustmentEnabled: true,
+                manualTimes: ['08:00'],
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: manualAdjustmentEnabled=true é inválido para medicamento clinical-1 (supportsManualAdjustment=false).',
+    );
+  });
+
+  it('rejects manualTimes when manualAdjustmentEnabled=false with detailed message', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      supportsManualAdjustment: true,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                manualAdjustmentEnabled: false,
+                manualTimes: ['08:00'],
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: manualTimes é inválido quando manualAdjustmentEnabled=false para medicamento clinical-1.',
+    );
+  });
+
+  it('returns detailed laterality message for ophthalmic incompatibility', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      isOphthalmic: true,
+      isOtic: false,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                ocularLaterality: OcularLaterality.RIGHT_EYE,
+                oticLaterality: OticLaterality.RIGHT_EAR,
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: oticLaterality é inválido para medicamento clinical-1 (isOphthalmic=true).',
+    );
+  });
+
+  it('returns detailed glycemia message for incompatible medication', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      requiresGlycemiaScale: false,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                glycemiaScaleRanges: buildGlycemiaRanges(),
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: glycemiaScaleRanges é inválido para medicamento clinical-1 (requiresGlycemiaScale=false).',
+    );
+  });
+
+  it('returns detailed monthly-special message for non-contraceptive medication', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      isContraceptiveMonthly: false,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                recurrenceType: TreatmentRecurrence.MONTHLY,
+                monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
+                monthlySpecialBaseDate: '2026-02-20',
+                monthlySpecialOffsetDays: 8,
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: monthlySpecial* é inválido para medicamento clinical-1 (isContraceptiveMonthly=false).',
+    );
   });
 });

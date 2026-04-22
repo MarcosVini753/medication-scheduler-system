@@ -19,6 +19,12 @@ import { PatientPrescriptionMedication } from './entities/patient-prescription-m
 import { PatientPrescriptionPhase } from './entities/patient-prescription-phase.entity';
 import { PatientPrescription } from './entities/patient-prescription.entity';
 
+type PrescriptionMedicationPhaseDto =
+  CreatePatientPrescriptionDto['medications'][number]['phases'][number];
+type ClinicalMedicationCatalogEntry = Awaited<
+  ReturnType<ClinicalCatalogService['findMedicationById']>
+>;
+
 @Injectable()
 export class PatientPrescriptionService {
   constructor(
@@ -55,9 +61,7 @@ export class PatientPrescriptionService {
           }
 
           this.ensureSequentialPhaseOrders(medicationDto.phases);
-          this.ensureLateralityCompatibility(clinicalMedication, medicationDto.phases);
-          this.ensureGlycemiaScaleCompatibility(clinicalMedication, medicationDto.phases);
-          this.ensureContraceptiveMonthlyCompatibility(clinicalMedication, medicationDto.phases);
+          this.ensureMedicationSupportsPhaseDomainRules(clinicalMedication, medicationDto.phases);
           this.ensureProtocolSupportsPhases(
             protocolSnapshotFromEntity(protocol),
             medicationDto.phases,
@@ -134,7 +138,7 @@ export class PatientPrescriptionService {
       );
       if (!supportedFrequency) {
         throw new UnprocessableEntityException(
-          `Protocolo ${protocolSnapshot.code} não suporta frequência ${phase.frequency}.`,
+          `Fase ${phase.phaseOrder}: frequency=${phase.frequency} não é suportada pelo protocolo ${protocolSnapshot.code}.`,
         );
       }
 
@@ -152,7 +156,7 @@ export class PatientPrescriptionService {
       !frequencySnapshot.allowedRecurrenceTypes.includes(phase.recurrenceType)
     ) {
       throw new UnprocessableEntityException(
-        `Protocolo ${protocolSnapshot.code} na frequência ${phase.frequency} não permite recorrência ${phase.recurrenceType}.`,
+        `Fase ${phase.phaseOrder}: recurrenceType=${phase.recurrenceType} não é permitido no protocolo ${protocolSnapshot.code} para frequency=${phase.frequency}.`,
       );
     }
 
@@ -161,7 +165,7 @@ export class PatientPrescriptionService {
       frequencySnapshot.allowsPrn === false
     ) {
       throw new UnprocessableEntityException(
-        `Protocolo ${protocolSnapshot.code} na frequência ${phase.frequency} não permite prescrição sob demanda (PRN).`,
+        `Fase ${phase.phaseOrder}: recurrenceType=PRN não é permitido no protocolo ${protocolSnapshot.code} para frequency=${phase.frequency}.`,
       );
     }
 
@@ -170,7 +174,7 @@ export class PatientPrescriptionService {
       frequencySnapshot.allowsVariableDoseBySchedule === false
     ) {
       throw new UnprocessableEntityException(
-        `Protocolo ${protocolSnapshot.code} na frequência ${phase.frequency} não permite dose variável por horário.`,
+        `Fase ${phase.phaseOrder}: sameDosePerSchedule=false não é permitido no protocolo ${protocolSnapshot.code} para frequency=${phase.frequency}.`,
       );
     }
   }
@@ -188,84 +192,134 @@ export class PatientPrescriptionService {
     }
   }
 
-  private ensureLateralityCompatibility(
-    medication: Awaited<ReturnType<ClinicalCatalogService['findMedicationById']>>,
+  private ensureMedicationSupportsPhaseDomainRules(
+    medication: ClinicalMedicationCatalogEntry,
     phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
   ): void {
     const isOphthalmic = Boolean(medication.isOphthalmic);
     const isOtic = Boolean(medication.isOtic);
+    const requiresGlycemiaScale = Boolean(medication.requiresGlycemiaScale);
+    const isContraceptiveMonthly = Boolean(medication.isContraceptiveMonthly);
+    const supportsManualAdjustment = Boolean(medication.supportsManualAdjustment);
 
     if (isOphthalmic && isOtic) {
-      throw new UnprocessableEntityException(
-        `Medicamento ${medication.id} está ambíguo: não pode ser oftálmico e otológico ao mesmo tempo para prescrição com lateralidade.`,
+      this.throwMedicationDomainError(
+        medication.id,
+        'é ambíguo para lateralidade',
+        'isOphthalmic=true e isOtic=true',
       );
     }
 
     phases.forEach((phase) => {
-      if (isOphthalmic) {
-        if (!phase.ocularLaterality) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} exige ocularLaterality para fase ${phase.phaseOrder}.`,
-          );
-        }
-        if (phase.oticLaterality) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} oftálmico não aceita oticLaterality na fase ${phase.phaseOrder}.`,
-          );
-        }
-        return;
-      }
-
-      if (isOtic) {
-        if (!phase.oticLaterality) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} exige oticLaterality para fase ${phase.phaseOrder}.`,
-          );
-        }
-        if (phase.ocularLaterality) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} otológico não aceita ocularLaterality na fase ${phase.phaseOrder}.`,
-          );
-        }
-        return;
-      }
-
-      if (phase.ocularLaterality || phase.oticLaterality) {
-        throw new UnprocessableEntityException(
-          `Medicamento ${medication.id} não é ocular/otológico e não aceita lateralidade na fase ${phase.phaseOrder}.`,
-        );
-      }
+      this.ensureLateralityCompatibilityForPhase(medication.id, phase, isOphthalmic, isOtic);
+      this.ensureGlycemiaScaleCompatibilityForPhase(medication.id, phase, requiresGlycemiaScale);
+      this.ensureContraceptiveMonthlyCompatibilityForPhase(
+        medication.id,
+        phase,
+        isContraceptiveMonthly,
+      );
+      this.ensureManualAdjustmentCompatibilityForPhase(
+        medication.id,
+        phase,
+        supportsManualAdjustment,
+      );
     });
   }
 
-  private ensureGlycemiaScaleCompatibility(
-    medication: Awaited<ReturnType<ClinicalCatalogService['findMedicationById']>>,
-    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+  private ensureLateralityCompatibilityForPhase(
+    medicationId: string,
+    phase: PrescriptionMedicationPhaseDto,
+    isOphthalmic: boolean,
+    isOtic: boolean,
   ): void {
-    const requiresGlycemiaScale = Boolean(medication.requiresGlycemiaScale);
-
-    phases.forEach((phase) => {
-      const ranges = phase.glycemiaScaleRanges;
-      if (requiresGlycemiaScale) {
-        if (!ranges?.length) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} exige glycemiaScaleRanges na fase ${phase.phaseOrder}.`,
-          );
-        }
-        this.ensureValidGlycemiaScaleRanges(
-          medication.id,
+    if (isOphthalmic) {
+      if (!phase.ocularLaterality) {
+        this.throwPhaseDomainError(
+          medicationId,
           phase.phaseOrder,
-          ranges,
+          'ocularLaterality',
+          'é obrigatório',
+          'isOphthalmic=true',
         );
-        return;
       }
+      if (phase.oticLaterality) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'oticLaterality',
+          'é inválido',
+          'isOphthalmic=true',
+        );
+      }
+      return;
+    }
 
-      if (ranges?.length) {
-        throw new UnprocessableEntityException(
-          `Medicamento ${medication.id} não aceita glycemiaScaleRanges na fase ${phase.phaseOrder}.`,
+    if (isOtic) {
+      if (!phase.oticLaterality) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'oticLaterality',
+          'é obrigatório',
+          'isOtic=true',
         );
       }
-    });
+      if (phase.ocularLaterality) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'ocularLaterality',
+          'é inválido',
+          'isOtic=true',
+        );
+      }
+      return;
+    }
+
+    if (phase.ocularLaterality || phase.oticLaterality) {
+      this.throwPhaseDomainError(
+        medicationId,
+        phase.phaseOrder,
+        'lateralidade',
+        'é inválida',
+        'isOphthalmic=false e isOtic=false',
+      );
+    }
+  }
+
+  private ensureGlycemiaScaleCompatibilityForPhase(
+    medicationId: string,
+    phase: PrescriptionMedicationPhaseDto,
+    requiresGlycemiaScale: boolean,
+  ): void {
+    const ranges = phase.glycemiaScaleRanges;
+    if (requiresGlycemiaScale) {
+      if (!ranges?.length) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'glycemiaScaleRanges',
+          'é obrigatório',
+          'requiresGlycemiaScale=true',
+        );
+      }
+      this.ensureValidGlycemiaScaleRanges(
+        medicationId,
+        phase.phaseOrder,
+        ranges,
+      );
+      return;
+    }
+
+    if (ranges?.length) {
+      this.throwPhaseDomainError(
+        medicationId,
+        phase.phaseOrder,
+        'glycemiaScaleRanges',
+        'é inválido',
+        'requiresGlycemiaScale=false',
+      );
+    }
   }
 
   private ensureValidGlycemiaScaleRanges(
@@ -280,7 +334,7 @@ export class PatientPrescriptionService {
     sortedRanges.forEach((range, index) => {
       if (range.maximum < range.minimum) {
         throw new UnprocessableEntityException(
-          `glycemiaScaleRanges inválida no medicamento ${medicationId} fase ${phaseOrder}: maximum menor que minimum.`,
+          `Fase ${phaseOrder}: glycemiaScaleRanges é inválido para medicamento ${medicationId} (maximum < minimum).`,
         );
       }
 
@@ -291,59 +345,121 @@ export class PatientPrescriptionService {
       const previousRange = sortedRanges[index - 1];
       if (range.minimum <= previousRange.maximum) {
         throw new UnprocessableEntityException(
-          `glycemiaScaleRanges inválida no medicamento ${medicationId} fase ${phaseOrder}: faixas com sobreposição.`,
+          `Fase ${phaseOrder}: glycemiaScaleRanges é inválido para medicamento ${medicationId} (faixas com sobreposição).`,
         );
       }
 
       if (range.minimum !== previousRange.maximum + 1) {
         throw new UnprocessableEntityException(
-          `glycemiaScaleRanges inválida no medicamento ${medicationId} fase ${phaseOrder}: faixas com lacuna.`,
+          `Fase ${phaseOrder}: glycemiaScaleRanges é inválido para medicamento ${medicationId} (faixas com lacuna).`,
         );
       }
     });
   }
 
-  private ensureContraceptiveMonthlyCompatibility(
-    medication: Awaited<ReturnType<ClinicalCatalogService['findMedicationById']>>,
-    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+  private ensureContraceptiveMonthlyCompatibilityForPhase(
+    medicationId: string,
+    phase: PrescriptionMedicationPhaseDto,
+    isContraceptiveMonthly: boolean,
   ): void {
-    const isContraceptiveMonthly = Boolean(medication.isContraceptiveMonthly);
+    const hasMonthlySpecialFields =
+      Boolean(phase.monthlySpecialReference) ||
+      Boolean(phase.monthlySpecialBaseDate) ||
+      phase.monthlySpecialOffsetDays !== undefined;
 
-    phases.forEach((phase) => {
-      const hasMonthlySpecialFields =
-        Boolean(phase.monthlySpecialReference) ||
-        Boolean(phase.monthlySpecialBaseDate) ||
-        phase.monthlySpecialOffsetDays !== undefined;
-
-      if (isContraceptiveMonthly) {
-        if (phase.recurrenceType !== TreatmentRecurrence.MONTHLY) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} exige recorrência MONTHLY na fase ${phase.phaseOrder}.`,
-          );
-        }
-        if (
-          !phase.monthlySpecialReference ||
-          !phase.monthlySpecialBaseDate ||
-          phase.monthlySpecialOffsetDays === undefined
-        ) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} exige monthlySpecialReference, monthlySpecialBaseDate e monthlySpecialOffsetDays na fase ${phase.phaseOrder}.`,
-          );
-        }
-        if (phase.monthlyDay !== undefined) {
-          throw new UnprocessableEntityException(
-            `Medicamento ${medication.id} contraceptivo mensal não aceita monthlyDay na fase ${phase.phaseOrder}.`,
-          );
-        }
-        return;
-      }
-
-      if (hasMonthlySpecialFields) {
-        throw new UnprocessableEntityException(
-          `Medicamento ${medication.id} não aceita monthlySpecial* na fase ${phase.phaseOrder}.`,
+    if (isContraceptiveMonthly) {
+      if (phase.recurrenceType !== TreatmentRecurrence.MONTHLY) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'recurrenceType',
+          `=${phase.recurrenceType} é inválido`,
+          'isContraceptiveMonthly=true exige MONTHLY',
         );
       }
-    });
+      if (
+        !phase.monthlySpecialReference ||
+        !phase.monthlySpecialBaseDate ||
+        phase.monthlySpecialOffsetDays === undefined
+      ) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'monthlySpecialReference/monthlySpecialBaseDate/monthlySpecialOffsetDays',
+          'são obrigatórios',
+          'isContraceptiveMonthly=true',
+        );
+      }
+      if (phase.monthlyDay !== undefined) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'monthlyDay',
+          'é inválido',
+          'isContraceptiveMonthly=true',
+        );
+      }
+      return;
+    }
+
+    if (hasMonthlySpecialFields) {
+      this.throwPhaseDomainError(
+        medicationId,
+        phase.phaseOrder,
+        'monthlySpecial*',
+        'é inválido',
+        'isContraceptiveMonthly=false',
+      );
+    }
+  }
+
+  private ensureManualAdjustmentCompatibilityForPhase(
+    medicationId: string,
+    phase: PrescriptionMedicationPhaseDto,
+    supportsManualAdjustment: boolean,
+  ): void {
+    if (phase.manualAdjustmentEnabled && !supportsManualAdjustment) {
+      this.throwPhaseDomainError(
+        medicationId,
+        phase.phaseOrder,
+        'manualAdjustmentEnabled=true',
+        'é inválido',
+        'supportsManualAdjustment=false',
+      );
+    }
+
+    if (!phase.manualAdjustmentEnabled && phase.manualTimes !== undefined) {
+      this.throwPhaseDomainError(
+        medicationId,
+        phase.phaseOrder,
+        'manualTimes',
+        'é inválido quando manualAdjustmentEnabled=false',
+      );
+    }
+  }
+
+  private throwMedicationDomainError(
+    medicationId: string,
+    message: string,
+    capability?: string,
+  ): never {
+    const capabilitySuffix = capability ? ` (${capability}).` : '.';
+    throw new UnprocessableEntityException(
+      `Medicamento ${medicationId}: ${message}${capabilitySuffix}`,
+    );
+  }
+
+  private throwPhaseDomainError(
+    medicationId: string,
+    phaseOrder: number,
+    field: string,
+    message: string,
+    capability?: string,
+  ): never {
+    const capabilitySuffix = capability ? ` (${capability}).` : '.';
+    throw new UnprocessableEntityException(
+      `Fase ${phaseOrder}: ${field} ${message} para medicamento ${medicationId}${capabilitySuffix}`,
+    );
   }
 }
 
