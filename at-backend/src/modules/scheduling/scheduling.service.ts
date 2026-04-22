@@ -470,6 +470,7 @@ export class SchedulingService {
       data_inicio_prescricao: toPtBrDate(prescription.startedAt),
       data_geracao_schedule: toPtBrDateFromDate(generationDate),
       medicamentos: medications.map((medication) => ({
+        prescription_medication_id: medication.id,
         nome_medicamento:
           medication.medicationSnapshot.commercialName ??
           medication.medicationSnapshot.activePrinciple,
@@ -560,6 +561,8 @@ export class SchedulingService {
               horario_resolvido: dose.timeFormatted,
             };
             return {
+              prescription_medication_id: dose.prescriptionMedication.id,
+              phase_id: dose.phase.id,
               dose_horario_label: dose.doseLabel,
               dose_valor: dose.administrationValue ?? null,
               dose_unidade: dose.administrationUnit ?? null,
@@ -611,6 +614,7 @@ export class SchedulingService {
         );
 
         return {
+          phase_id: phase.id,
           fase_ordem: phase.phaseOrder,
           fase_label: `Posologia ${phase.phaseOrder}`,
           data_inicio: toPtBrDate(primeiraDose?.startDate),

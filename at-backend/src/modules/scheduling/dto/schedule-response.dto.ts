@@ -64,6 +64,8 @@ export interface FaixaEscalaGlicemicaDto {
 }
 
 export interface ScheduleEntryDto {
+  prescription_medication_id: string;
+  phase_id: string;
   dose_horario_label: string;
   dose_valor: string | null;
   dose_unidade: string | null;
@@ -100,6 +102,7 @@ export interface ScheduleEntryDto {
 }
 
 export interface ScheduledPhaseDto {
+  phase_id: string;
   fase_ordem: number;
   fase_label: string;
   data_inicio: string | null;
@@ -122,6 +125,7 @@ export interface ScheduledPhaseDto {
 }
 
 export interface ScheduledMedicationDto {
+  prescription_medication_id: string;
   nome_medicamento: string;
   principio_ativo: string;
   apresentacao: string;

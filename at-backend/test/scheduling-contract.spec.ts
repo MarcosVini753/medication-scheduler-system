@@ -77,6 +77,7 @@ describe('SchedulingService final schedule JSON contract', () => {
 
     const medication = result.medicamentos[0];
     expect(medication).toMatchObject({
+      prescription_medication_id: expect.any(String),
       nome_medicamento: 'CONTRAVE',
       principio_ativo: 'Naltrexona 8 mg + Bupropiona 90 mg',
       apresentacao: 'Comprimido revestido de liberacao prolongada',
@@ -92,6 +93,7 @@ describe('SchedulingService final schedule JSON contract', () => {
 
     const phase = medication.fases[0];
     expect(phase).toMatchObject({
+      phase_id: expect.any(String),
       fase_ordem: 1,
       fase_label: 'Posologia 1',
       data_inicio: '20/02/2026',
@@ -117,6 +119,8 @@ describe('SchedulingService final schedule JSON contract', () => {
 
     const entry = phase.entradas[0];
     expect(entry).toMatchObject({
+      prescription_medication_id: expect.any(String),
+      phase_id: expect.any(String),
       dose_horario_label: 'D1',
       dose_valor: '1',
       dose_unidade: DoseUnit.COMP,
@@ -142,6 +146,9 @@ describe('SchedulingService final schedule JSON contract', () => {
       observacao: null,
       conflito: null,
     });
+
+    expect(entry.prescription_medication_id).toBe(medication.prescription_medication_id);
+    expect(entry.phase_id).toBe(phase.phase_id);
   });
 
   it('returns data_fim as null when phase is uso_continuo', async () => {
@@ -164,6 +171,41 @@ describe('SchedulingService final schedule JSON contract', () => {
       data_inicio: '15/03/2026',
       data_fim: null,
       uso_continuo: true,
+    });
+  });
+
+  it('keeps operational ids consistent across medicamentos, fases and entradas', async () => {
+    const { service } = createSchedulingService();
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        phases: [
+          buildPhase({
+            phaseOrder: 1,
+            frequency: 2,
+            treatmentDays: 5,
+          }),
+        ],
+      }),
+      buildPrescriptionMedication({
+        phases: [
+          buildPhase({
+            phaseOrder: 1,
+            frequency: 1,
+            treatmentDays: 5,
+          }),
+        ],
+      }),
+    ], { startedAt: '2026-04-01' });
+
+    result.medicamentos.forEach((medication) => {
+      expect(medication.prescription_medication_id).toEqual(expect.any(String));
+      medication.fases.forEach((phase) => {
+        expect(phase.phase_id).toEqual(expect.any(String));
+        phase.entradas.forEach((entry) => {
+          expect(entry.prescription_medication_id).toBe(medication.prescription_medication_id);
+          expect(entry.phase_id).toBe(phase.phase_id);
+        });
+      });
     });
   });
 
