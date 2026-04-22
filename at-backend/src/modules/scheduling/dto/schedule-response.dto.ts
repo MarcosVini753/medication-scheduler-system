@@ -27,70 +27,79 @@ export interface ScheduleConflictDto {
   windowAfterMinutes?: number;
 }
 
+export interface ContextoHorarioAgendadoDto {
+  ancora: ClinicalAnchor | null;
+  ancora_horario_minutos: number | null;
+  deslocamento_minutos: number | null;
+  tag_semantica: ClinicalSemanticTag | null;
+  horario_original_minutos: number;
+  horario_original: string;
+  horario_resolvido_minutos: number;
+  horario_resolvido: string;
+}
+
+export interface ConflitoAgendamentoDto {
+  tipo_interacao_codigo: ClinicalInteractionType | null;
+  tipo_interacao_label: string | null;
+  tipo_resolucao_codigo: ClinicalResolutionType | null;
+  tipo_resolucao_label: string | null;
+  medicamento_disparador_nome: string | null;
+  grupo_disparador_codigo: string | null;
+  protocolo_disparador_codigo: string | null;
+  prioridade_regra: number | null;
+  janela_antes_minutos: number | null;
+  janela_depois_minutos: number | null;
+}
+
 export interface ScheduleEntryDto {
-  doseLabel: string;
-  administrationValue?: string;
-  administrationUnit?: string;
-  administrationLabel: string;
-  recurrenceType?: TreatmentRecurrence;
-  recurrenceLabel?: string;
-  startDate?: string;
-  endDate?: string;
-  weeklyDay?: string;
-  monthlyRule?: string;
-  monthlyDay?: number;
-  alternateDaysInterval?: number;
-  continuousUse: boolean;
-  isPrn: boolean;
-  prnReason?: PrnReason;
-  clinicalInstructionLabel?: string;
-  timeInMinutes: number;
-  timeFormatted: string;
-  timeContext: ResolvedScheduleTimeContextDto;
-  status: string;
-  note?: string;
-  conflict?: ScheduleConflictDto;
+  dose_horario_label: string;
+  dose_valor: string | null;
+  dose_unidade: string | null;
+  dose_exibicao: string;
+  horario: string;
+  recorrencia_codigo: TreatmentRecurrence | null;
+  recorrencia_label: string;
+  dia_semanal: string | null;
+  regra_mensal: string | null;
+  dia_mensal: number | null;
+  intervalo_dias_alternados: number | null;
+  uso_continuo: boolean;
+  uso_se_necessario: boolean;
+  motivo_se_necessario: PrnReason | null;
+  status_codigo: string;
+  status_label: string;
+  orientacao_clinica: string | null;
+  observacao: string | null;
+  contexto_horario: ContextoHorarioAgendadoDto;
+  conflito: ConflitoAgendamentoDto | null;
 }
 
 export interface ScheduledPhaseDto {
-  phaseOrder: number;
-  recurrenceType?: TreatmentRecurrence;
-  recurrenceLabel?: string;
-  startDate?: string;
-  endDate?: string;
-  continuousUse: boolean;
-  entries: ScheduleEntryDto[];
+  fase_ordem: number;
+  fase_label: string;
+  data_inicio: string | null;
+  data_fim: string | null;
+  uso_continuo: boolean;
+  entradas: ScheduleEntryDto[];
 }
 
 export interface ScheduledMedicationDto {
-  prescriptionMedicationId: string;
-  sourceClinicalMedicationId: string;
-  sourceProtocolId: string;
-  medicationName: string;
-  activePrinciple: string;
-  presentation: string;
-  pharmaceuticalForm?: string;
-  administrationRoute: string;
-  usageInstructions: string;
-  diluentType?: string;
-  defaultAdministrationUnit?: string;
-  supportsManualAdjustment?: boolean;
-  isOphthalmic?: boolean;
-  isOtic?: boolean;
-  isContraceptiveMonthly?: boolean;
-  requiresGlycemiaScale?: boolean;
-  notes?: string;
-  groupCode: string;
-  subgroupCode?: string;
-  protocolCode: string;
-  protocolName?: string;
-  protocolDescription?: string;
-  clinicalNotes?: string;
-  phases: ScheduledPhaseDto[];
+  nome_medicamento: string;
+  principio_ativo: string;
+  apresentacao: string;
+  forma_farmaceutica: string | null;
+  via_administracao: string;
+  orientacoes_uso: string;
+  grupo_codigo: string;
+  grupo_label: string;
+  protocolo_codigo: string;
+  protocolo_nome: string | null;
+  protocolo_descricao: string | null;
+  fases: ScheduledPhaseDto[];
 }
 
 export interface SchedulingResultDto {
-  patientId: string;
-  prescriptionId: string;
-  medications: ScheduledMedicationDto[];
+  paciente_id: string;
+  prescricao_id: string;
+  medicamentos: ScheduledMedicationDto[];
 }

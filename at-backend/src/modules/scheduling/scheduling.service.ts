@@ -2,7 +2,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { ClinicalAnchor } from '../../common/enums/clinical-anchor.enum';
+import { ClinicalInteractionType } from '../../common/enums/clinical-interaction-type.enum';
+import { ClinicalResolutionType } from '../../common/enums/clinical-resolution-type.enum';
 import { ClinicalSemanticTag } from '../../common/enums/clinical-semantic-tag.enum';
+import { PrnReason } from '../../common/enums/prn-reason.enum';
 import { ScheduleStatus } from '../../common/enums/schedule-status.enum';
 import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
 import { calculateEndDate } from '../../common/utils/treatment-window.util';
@@ -13,22 +16,45 @@ import { PatientPrescriptionPhase } from '../patient-prescriptions/entities/pati
 import { PatientPrescription } from '../patient-prescriptions/entities/patient-prescription.entity';
 import { ConflictResolutionService, ConflictEntryLike } from './services/conflict-resolution.service';
 import {
+  ConflitoAgendamentoDto,
+  ContextoHorarioAgendadoDto,
+  ScheduleEntryDto,
   ScheduledPhaseDto,
   SchedulingResultDto,
-  ScheduleEntryDto,
 } from './dto/schedule-response.dto';
 import { ScheduledDose } from './entities/scheduled-dose.entity';
 import { SchedulingRulesService } from './services/scheduling-rules.service';
 
 type ScheduleAnchors = Record<ClinicalAnchor, number>;
+interface PhaseWindow {
+  startDate: string;
+  endDate?: string;
+}
 
-interface WorkingEntry extends ScheduleEntryDto, ConflictEntryLike {
+interface WorkingEntry extends ConflictEntryLike {
   prescriptionMedication: PatientPrescriptionMedication;
   phase: PatientPrescriptionPhase;
   sourceClinicalMedicationId: string;
   sourceProtocolId: string;
   phaseOrder: number;
   protocolPriority: number;
+  doseLabel: string;
+  administrationValue?: string;
+  administrationUnit?: string;
+  administrationLabel: string;
+  recurrenceType?: TreatmentRecurrence;
+  recurrenceLabel?: string;
+  startDate?: string;
+  endDate?: string;
+  weeklyDay?: string;
+  monthlyRule?: string;
+  monthlyDay?: number;
+  alternateDaysInterval?: number;
+  continuousUse: boolean;
+  isPrn: boolean;
+  prnReason?: PrnReason;
+  clinicalInstructionLabel?: string;
+  timeFormatted: string;
 }
 
 @Injectable()
@@ -125,7 +151,7 @@ export class SchedulingService {
     prescriptionStartDate: string,
     medication: PatientPrescriptionMedication,
     phase: PatientPrescriptionPhase,
-  ): { startDate: string; endDate?: string } {
+  ): PhaseWindow {
     const sorted = [...medication.phases].sort((a, b) => a.phaseOrder - b.phaseOrder);
     let currentStart = prescriptionStartDate;
     for (const currentPhase of sorted) {
@@ -148,7 +174,7 @@ export class SchedulingService {
     medication: PatientPrescriptionMedication,
     phase: PatientPrescriptionPhase,
     anchors: ScheduleAnchors,
-    phaseWindow: { startDate: string; endDate?: string },
+    phaseWindow: PhaseWindow,
   ): WorkingEntry[] {
     if (phase.manualAdjustmentEnabled && phase.manualTimes?.length) {
       return phase.manualTimes.map((time, index) =>
@@ -199,7 +225,7 @@ export class SchedulingService {
     anchor: ClinicalAnchor,
     anchorTimeInMinutes: number,
     offsetMinutes: number,
-    phaseWindow: { startDate: string; endDate?: string },
+    phaseWindow: PhaseWindow,
     note?: string,
   ): WorkingEntry {
     const administration = this.resolveAdministration(phase, doseLabel);
@@ -367,35 +393,23 @@ export class SchedulingService {
     });
 
     return {
-      patientId: prescription.patient.id,
-      prescriptionId: prescription.id,
-      medications: medications.map((medication) => ({
-        prescriptionMedicationId: medication.id,
-        sourceClinicalMedicationId: medication.sourceClinicalMedicationId,
-        sourceProtocolId: medication.sourceProtocolId,
-        medicationName:
+      paciente_id: prescription.patient.id,
+      prescricao_id: prescription.id,
+      medicamentos: medications.map((medication) => ({
+        nome_medicamento:
           medication.medicationSnapshot.commercialName ??
           medication.medicationSnapshot.activePrinciple,
-        activePrinciple: medication.medicationSnapshot.activePrinciple,
-        presentation: medication.medicationSnapshot.presentation,
-        pharmaceuticalForm: medication.medicationSnapshot.pharmaceuticalForm,
-        administrationRoute: medication.medicationSnapshot.administrationRoute,
-        usageInstructions: medication.medicationSnapshot.usageInstructions,
-        diluentType: medication.medicationSnapshot.diluentType,
-        defaultAdministrationUnit: medication.medicationSnapshot.defaultAdministrationUnit,
-        supportsManualAdjustment: medication.medicationSnapshot.supportsManualAdjustment,
-        isOphthalmic: medication.medicationSnapshot.isOphthalmic,
-        isOtic: medication.medicationSnapshot.isOtic,
-        isContraceptiveMonthly: medication.medicationSnapshot.isContraceptiveMonthly,
-        requiresGlycemiaScale: medication.medicationSnapshot.requiresGlycemiaScale,
-        notes: medication.medicationSnapshot.notes,
-        groupCode: medication.protocolSnapshot.groupCode,
-        subgroupCode: medication.protocolSnapshot.subgroupCode,
-        protocolCode: medication.protocolSnapshot.code,
-        protocolName: medication.protocolSnapshot.name,
-        protocolDescription: medication.protocolSnapshot.description,
-        clinicalNotes: medication.protocolSnapshot.clinicalNotes,
-        phases: this.mapPhases(medication, doses),
+        principio_ativo: medication.medicationSnapshot.activePrinciple,
+        apresentacao: medication.medicationSnapshot.presentation,
+        forma_farmaceutica: medication.medicationSnapshot.pharmaceuticalForm ?? null,
+        via_administracao: medication.medicationSnapshot.administrationRoute,
+        orientacoes_uso: medication.medicationSnapshot.usageInstructions,
+        grupo_codigo: medication.protocolSnapshot.groupCode,
+        grupo_label: toGroupLabel(medication.protocolSnapshot.groupCode),
+        protocolo_codigo: medication.protocolSnapshot.code,
+        protocolo_nome: medication.protocolSnapshot.name ?? null,
+        protocolo_descricao: medication.protocolSnapshot.description ?? null,
+        fases: this.mapPhases(medication, doses),
       })),
     };
   }
@@ -407,74 +421,85 @@ export class SchedulingService {
     return [...medication.phases]
       .sort((a, b) => a.phaseOrder - b.phaseOrder)
       .map((phase) => {
-        const phaseEntries = doses
+        const phaseDoses = doses
           .filter(
             (dose) =>
               dose.prescriptionMedication.id === medication.id &&
               dose.phase.id === phase.id,
           )
-          .sort((a, b) => a.timeInMinutes - b.timeInMinutes)
-          .map((dose) => ({
-            doseLabel: dose.doseLabel,
-            administrationValue: dose.administrationValue,
-            administrationUnit: dose.administrationUnit,
-            administrationLabel: dose.administrationLabel ?? dose.doseLabel,
-            recurrenceType: dose.recurrenceType,
-            recurrenceLabel: formatRecurrenceLabel(
+          .sort((a, b) => a.timeInMinutes - b.timeInMinutes);
+
+        const phaseEntries = phaseDoses.map((dose): ScheduleEntryDto => {
+            const recorrencia_label = formatRecurrenceLabel(
               phase.recurrenceType,
               dose.startDate,
               dose.endDate,
               phase,
-            ),
-            startDate: dose.startDate,
-            endDate: dose.endDate,
-            weeklyDay: dose.weeklyDay,
-            monthlyRule: dose.monthlyRule,
-            monthlyDay: dose.monthlyDay,
-            alternateDaysInterval: dose.alternateDaysInterval,
-            continuousUse: dose.continuousUse,
-            isPrn: dose.isPrn,
-            prnReason: dose.prnReason,
-            clinicalInstructionLabel: dose.clinicalInstructionLabel,
-            timeInMinutes: dose.timeInMinutes,
-            timeFormatted: dose.timeFormatted,
-            timeContext: {
-              anchor: dose.anchor,
-              anchorTimeInMinutes: dose.anchorTimeInMinutes,
-              offsetMinutes: dose.offsetMinutes,
-              semanticTag: dose.semanticTag,
-              originalTimeInMinutes: dose.originalTimeInMinutes,
-              originalTimeFormatted: dose.originalTimeFormatted,
-              resolvedTimeInMinutes: dose.timeInMinutes,
-              resolvedTimeFormatted: dose.timeFormatted,
-            },
-            status: dose.status,
-            note: dose.note,
-            conflict:
-              dose.conflictInteractionType || dose.conflictResolutionType
-                ? {
-                    interactionType: dose.conflictInteractionType,
-                    resolutionType: dose.conflictResolutionType,
-                    triggerMedicationName: dose.conflictTriggerMedicationName,
-                    triggerGroupCode: dose.conflictTriggerGroupCode,
-                    triggerProtocolCode: dose.conflictTriggerProtocolCode,
-                    rulePriority: dose.conflictRulePriority,
-                    windowBeforeMinutes: dose.conflictWindowBeforeMinutes,
-                    windowAfterMinutes: dose.conflictWindowAfterMinutes,
-                  }
-                : undefined,
-          }));
+            );
+            const conflito = this.mapConflito(dose);
+            const contexto_horario: ContextoHorarioAgendadoDto = {
+              ancora: dose.anchor ?? null,
+              ancora_horario_minutos: dose.anchorTimeInMinutes ?? null,
+              deslocamento_minutos: dose.offsetMinutes ?? null,
+              tag_semantica: dose.semanticTag ?? null,
+              horario_original_minutos: dose.originalTimeInMinutes,
+              horario_original: dose.originalTimeFormatted,
+              horario_resolvido_minutos: dose.timeInMinutes,
+              horario_resolvido: dose.timeFormatted,
+            };
+            return {
+              dose_horario_label: dose.doseLabel,
+              dose_valor: dose.administrationValue ?? null,
+              dose_unidade: dose.administrationUnit ?? null,
+              dose_exibicao: dose.administrationLabel ?? dose.doseLabel,
+              horario: dose.timeFormatted,
+              recorrencia_codigo: dose.recurrenceType ?? null,
+              recorrencia_label,
+              dia_semanal: dose.weeklyDay ?? null,
+              regra_mensal: dose.monthlyRule ?? null,
+              dia_mensal: dose.monthlyDay ?? null,
+              intervalo_dias_alternados: dose.alternateDaysInterval ?? null,
+              uso_continuo: dose.continuousUse,
+              uso_se_necessario: dose.isPrn,
+              motivo_se_necessario: dose.prnReason ?? null,
+              status_codigo: dose.status,
+              status_label: toStatusLabel(dose.status),
+              orientacao_clinica: dose.clinicalInstructionLabel ?? null,
+              observacao: dose.note ?? null,
+              contexto_horario,
+              conflito,
+            };
+          });
+
+        const primeiraDose = phaseDoses[0];
 
         return {
-          phaseOrder: phase.phaseOrder,
-          recurrenceType: phase.recurrenceType,
-          recurrenceLabel: phaseEntries[0]?.recurrenceLabel,
-          startDate: phaseEntries[0]?.startDate,
-          endDate: phaseEntries[0]?.endDate,
-          continuousUse: phase.continuousUse,
-          entries: phaseEntries,
+          fase_ordem: phase.phaseOrder,
+          fase_label: `Posologia ${phase.phaseOrder}`,
+          data_inicio: toPtBrDate(primeiraDose?.startDate),
+          data_fim: toPtBrDate(primeiraDose?.endDate),
+          uso_continuo: phase.continuousUse,
+          entradas: phaseEntries,
         };
       });
+  }
+
+  private mapConflito(dose: ScheduledDose): ConflitoAgendamentoDto | null {
+    if (!dose.conflictInteractionType && !dose.conflictResolutionType) {
+      return null;
+    }
+    return {
+      tipo_interacao_codigo: dose.conflictInteractionType ?? null,
+      tipo_interacao_label: toInteractionLabel(dose.conflictInteractionType),
+      tipo_resolucao_codigo: dose.conflictResolutionType ?? null,
+      tipo_resolucao_label: toResolutionLabel(dose.conflictResolutionType),
+      medicamento_disparador_nome: dose.conflictTriggerMedicationName ?? null,
+      grupo_disparador_codigo: dose.conflictTriggerGroupCode ?? null,
+      protocolo_disparador_codigo: dose.conflictTriggerProtocolCode ?? null,
+      prioridade_regra: dose.conflictRulePriority ?? null,
+      janela_antes_minutos: dose.conflictWindowBeforeMinutes ?? null,
+      janela_depois_minutos: dose.conflictWindowAfterMinutes ?? null,
+    };
   }
 }
 
@@ -485,7 +510,7 @@ function formatRecurrenceLabel(
   phase: PatientPrescriptionPhase,
 ): string {
   if (phase.continuousUse) {
-    return 'Uso continuo';
+    return 'Uso contínuo';
   }
 
   switch (recurrenceType) {
@@ -498,12 +523,78 @@ function formatRecurrenceLabel(
       return `A cada ${phase.alternateDaysInterval ?? 2} dias`;
     case TreatmentRecurrence.PRN:
       return phase.prnReason
-        ? `Se necessario: ${String(phase.prnReason).toLowerCase()}`
-        : 'Se necessario';
+        ? `Se necessário: ${toPrnReasonLabel(phase.prnReason)}`
+        : 'Se necessário';
     case TreatmentRecurrence.DAILY:
     default:
-      if (!startDate) return 'Diario';
-      return endDate ? 'Diario' : phase.continuousUse ? 'Uso continuo' : 'Diario';
+      if (!startDate) return 'Diário';
+      return endDate ? 'Diário' : phase.continuousUse ? 'Uso contínuo' : 'Diário';
+  }
+}
+
+function toPtBrDate(dateString: string | undefined): string | null {
+  if (!dateString) return null;
+  const [year, month, day] = dateString.split('-');
+  if (!year || !month || !day) return null;
+  return `${day}/${month}/${year}`;
+}
+
+function toStatusLabel(status: string): string {
+  switch (status) {
+    case ScheduleStatus.INACTIVE:
+      return 'Inativo';
+    case ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED:
+      return 'Ajuste manual necessário';
+    case ScheduleStatus.ACTIVE:
+    default:
+      return 'Ativo';
+  }
+}
+
+function toInteractionLabel(interactionType?: ClinicalInteractionType): string | null {
+  switch (interactionType) {
+    case ClinicalInteractionType.AFFECTED_BY_SALTS:
+      return 'Interferência com sais/antiácidos';
+    case ClinicalInteractionType.AFFECTED_BY_SUCRALFATE:
+      return 'Interferência com sucralfato';
+    case ClinicalInteractionType.AFFECTED_BY_CALCIUM:
+      return 'Interferência com cálcio';
+    default:
+      return null;
+  }
+}
+
+function toResolutionLabel(resolutionType?: ClinicalResolutionType): string | null {
+  switch (resolutionType) {
+    case ClinicalResolutionType.INACTIVATE_SOURCE:
+      return 'Inativar dose';
+    case ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW:
+      return 'Deslocar dose por janela';
+    case ClinicalResolutionType.REQUIRE_MANUAL_ADJUSTMENT:
+      return 'Exigir ajuste manual';
+    default:
+      return null;
+  }
+}
+
+function toGroupLabel(groupCode: string): string {
+  if (!groupCode) return 'Grupo';
+  const normalized = groupCode.startsWith('GROUP_')
+    ? groupCode.replace('GROUP_', '')
+    : groupCode;
+  return `Grupo ${normalized.split('_').join(' ')}`;
+}
+
+function toPrnReasonLabel(prnReason?: PrnReason): string {
+  switch (prnReason) {
+    case PrnReason.CRISIS:
+      return 'crise';
+    case PrnReason.PAIN:
+      return 'dor';
+    case PrnReason.FEVER:
+      return 'febre';
+    default:
+      return 'necessidade clínica';
   }
 }
 

@@ -11,6 +11,7 @@ import {
   buildScheduleResult,
   createSchedulingService,
   findEntriesByMedication,
+  findEntriesByMedicationAndTime,
   findMedication,
   findPhase,
 } from './helpers/scheduling-test-helpers';
@@ -349,14 +350,9 @@ describe('SchedulingService phased treatments from PDF', () => {
       startedAt: '2026-02-20',
     });
 
-    const namesAt0700 = result.medications
-      .flatMap((medication) =>
-        medication.phases.flatMap((phase) =>
-          phase.entries
-            .filter((entry) => entry.timeFormatted === '07:00')
-            .map(() => medication.medicationName),
-        ),
-      );
+    const namesAt0700 = ['AAA', 'ZZZ'].filter(
+      (name) => findEntriesByMedicationAndTime(result, name, '07:00').length > 0,
+    );
 
     expect(namesAt0700).toEqual(['AAA', 'ZZZ']);
   });

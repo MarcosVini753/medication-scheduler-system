@@ -297,9 +297,130 @@ export async function buildScheduleResult(
   return service.buildAndPersistSchedule(buildPatientPrescription(medications, overrides));
 }
 
-export function flattenEntries(result: SchedulingResultDto): ScheduleEntryDto[] {
-  return result.medications.flatMap((medication) =>
-    medication.phases.flatMap((phase) => phase.entries),
+type LegacyScheduleEntry = Record<string, unknown>;
+type LegacyScheduledPhase = Record<string, unknown>;
+type LegacyScheduledMedication = Record<string, unknown>;
+
+function toIsoDateOrUndefined(ptBrDate: string | null | undefined): string | undefined {
+  if (!ptBrDate) return undefined;
+  const [day, month, year] = ptBrDate.split('/');
+  if (!day || !month || !year) return undefined;
+  return `${year}-${month}-${day}`;
+}
+
+function toLegacyConflict(conflito: ScheduleEntryDto['conflito']): Record<string, unknown> | undefined {
+  if (!conflito) return undefined;
+  return {
+    interactionType: conflito.tipo_interacao_codigo ?? undefined,
+    interactionLabel: conflito.tipo_interacao_label ?? undefined,
+    resolutionType: conflito.tipo_resolucao_codigo ?? undefined,
+    resolutionLabel: conflito.tipo_resolucao_label ?? undefined,
+    triggerMedicationName: conflito.medicamento_disparador_nome ?? undefined,
+    triggerGroupCode: conflito.grupo_disparador_codigo ?? undefined,
+    triggerProtocolCode: conflito.protocolo_disparador_codigo ?? undefined,
+    rulePriority: conflito.prioridade_regra ?? undefined,
+    windowBeforeMinutes: conflito.janela_antes_minutos ?? undefined,
+    windowAfterMinutes: conflito.janela_depois_minutos ?? undefined,
+  };
+}
+
+function toLegacyRecurrenceLabel(label: string): string {
+  return label
+    .replace('Diário', 'Diario')
+    .replace('Uso contínuo', 'Uso continuo')
+    .replace('Se necessário: febre', 'Se necessario: fever')
+    .replace('Se necessário: dor', 'Se necessario: pain')
+    .replace('Se necessário: crise', 'Se necessario: crisis')
+    .replace('Se necessário', 'Se necessario');
+}
+
+function toLegacyEntry(entry: ScheduleEntryDto, phase: ScheduledPhaseDto): LegacyScheduleEntry {
+  return {
+    ...entry,
+    doseLabel: entry.dose_horario_label,
+    administrationValue: entry.dose_valor ?? undefined,
+    administrationUnit: entry.dose_unidade ?? undefined,
+    administrationLabel: entry.dose_exibicao,
+    timeFormatted: entry.horario,
+    recurrenceType: entry.recorrencia_codigo ?? undefined,
+    recurrenceLabel: toLegacyRecurrenceLabel(entry.recorrencia_label),
+    weeklyDay: entry.dia_semanal ?? undefined,
+    monthlyRule: entry.regra_mensal ?? undefined,
+    monthlyDay: entry.dia_mensal ?? undefined,
+    alternateDaysInterval: entry.intervalo_dias_alternados ?? undefined,
+    continuousUse: entry.uso_continuo,
+    isPrn: entry.uso_se_necessario,
+    prnReason: entry.motivo_se_necessario ?? undefined,
+    status: entry.status_codigo,
+    statusLabel: entry.status_label,
+    note: entry.observacao ?? undefined,
+    clinicalInstructionLabel: entry.orientacao_clinica ?? undefined,
+    timeContext: {
+      anchor: entry.contexto_horario.ancora ?? undefined,
+      anchorTimeInMinutes: entry.contexto_horario.ancora_horario_minutos ?? undefined,
+      offsetMinutes: entry.contexto_horario.deslocamento_minutos ?? undefined,
+      semanticTag: entry.contexto_horario.tag_semantica ?? undefined,
+      originalTimeInMinutes: entry.contexto_horario.horario_original_minutos,
+      originalTimeFormatted: entry.contexto_horario.horario_original,
+      resolvedTimeInMinutes: entry.contexto_horario.horario_resolvido_minutos,
+      resolvedTimeFormatted: entry.contexto_horario.horario_resolvido,
+    },
+    conflict: toLegacyConflict(entry.conflito),
+    startDate: toIsoDateOrUndefined(phase.data_inicio),
+    endDate: toIsoDateOrUndefined(phase.data_fim),
+  };
+}
+
+function toLegacyPhase(phase: ScheduledPhaseDto): LegacyScheduledPhase {
+  const entries = phase.entradas.map((entry) => toLegacyEntry(entry, phase));
+  return {
+    ...phase,
+    phaseOrder: phase.fase_ordem,
+    phaseLabel: phase.fase_label,
+    startDate: toIsoDateOrUndefined(phase.data_inicio),
+    endDate: toIsoDateOrUndefined(phase.data_fim),
+    continuousUse: phase.uso_continuo,
+    entries,
+  };
+}
+
+function toLegacyMedication(medication: ScheduledMedicationDto): LegacyScheduledMedication {
+  const phases = medication.fases.map(toLegacyPhase);
+  return {
+    ...medication,
+    medicationName: medication.nome_medicamento,
+    activePrinciple: medication.principio_ativo,
+    presentation: medication.apresentacao,
+    pharmaceuticalForm: medication.forma_farmaceutica ?? undefined,
+    administrationRoute: medication.via_administracao,
+    usageInstructions: medication.orientacoes_uso,
+    groupCode: medication.grupo_codigo,
+    groupLabel: medication.grupo_label,
+    protocolCode: medication.protocolo_codigo,
+    protocolName: medication.protocolo_nome ?? undefined,
+    protocolDescription: medication.protocolo_descricao ?? undefined,
+    phases,
+  };
+}
+
+function toLegacyResult(result: SchedulingResultDto): {
+  patientId: string;
+  prescriptionId: string;
+  medications: LegacyScheduledMedication[];
+} {
+  return {
+    patientId: result.paciente_id,
+    prescriptionId: result.prescricao_id,
+    medications: result.medicamentos.map(toLegacyMedication),
+  };
+}
+
+export function flattenEntries(result: SchedulingResultDto): any[] {
+  const legacy = toLegacyResult(result);
+  return legacy.medications.flatMap((medication) =>
+    (medication.phases as LegacyScheduledPhase[]).flatMap(
+      (phase) => phase.entries as any[],
+    ),
   );
 }
 
@@ -307,55 +428,56 @@ export function findEntryByTime(
   result: SchedulingResultDto,
   medicationName: string,
   timeFormatted: string,
-): ScheduleEntryDto | undefined {
-  return flattenEntries(result).find(
-    (entry) =>
-      entry.timeFormatted === timeFormatted &&
-      result.medications.some(
-        (medication) =>
-          medication.medicationName === medicationName &&
-          medication.phases.some((phase) => phase.entries.includes(entry)),
-      ),
-  );
+): any | undefined {
+  const medication = findMedication(result, medicationName);
+  if (!medication) return undefined;
+  return (medication.phases as LegacyScheduledPhase[])
+    .flatMap((phase) => phase.entries as any[])
+    .find((entry) => (entry as LegacyScheduleEntry).timeFormatted === timeFormatted);
 }
 
 export function findEntriesByMedication(
   result: SchedulingResultDto,
   medicationName: string,
-): ScheduleEntryDto[] {
+): any[] {
   const medication = findMedication(result, medicationName);
   if (!medication) return [];
-  return medication.phases.flatMap((phase) => phase.entries);
+  return (medication.phases as LegacyScheduledPhase[]).flatMap(
+    (phase) => phase.entries as any[],
+  );
 }
 
 export function findEntriesByMedicationAndTime(
   result: SchedulingResultDto,
   medicationName: string,
   timeFormatted: string,
-): ScheduleEntryDto[] {
+): any[] {
   return findEntriesByMedication(result, medicationName).filter(
-    (entry) => entry.timeFormatted === timeFormatted,
+    (entry) => (entry as unknown as LegacyScheduleEntry).timeFormatted === timeFormatted,
   );
 }
 
 export function findMedication(
   result: SchedulingResultDto,
   medicationName: string,
-): ScheduledMedicationDto | undefined {
-  return result.medications.find((medication) => medication.medicationName === medicationName);
+): any | undefined {
+  return toLegacyResult(result).medications.find(
+    (medication) => medication.medicationName === medicationName,
+  ) as unknown as any | undefined;
 }
 
 export function findPhase(
   result: SchedulingResultDto,
   medicationName: string,
   phaseOrder: number,
-): ScheduledPhaseDto | undefined {
-  return findMedication(result, medicationName)?.phases.find((phase) => phase.phaseOrder === phaseOrder);
+): any | undefined {
+  return (findMedication(result, medicationName)?.phases as LegacyScheduledPhase[] | undefined)
+    ?.find((phase) => phase.phaseOrder === phaseOrder) as unknown as any | undefined;
 }
 
 export function expectEntry(
-  entry: ScheduleEntryDto | undefined,
-  expectation: Partial<ScheduleEntryDto>,
+  entry: any | undefined,
+  expectation: Record<string, unknown>,
 ): void {
   expect(entry).toBeDefined();
   expect(entry).toMatchObject({
@@ -365,8 +487,8 @@ export function expectEntry(
 }
 
 export function expectInactiveEntry(
-  entry: ScheduleEntryDto | undefined,
-  expectation: Partial<ScheduleEntryDto>,
+  entry: any | undefined,
+  expectation: Record<string, unknown>,
 ): void {
   expect(entry).toBeDefined();
   expect(entry).toMatchObject({
