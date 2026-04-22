@@ -18,6 +18,7 @@ import { PatientPrescriptionPhase } from '../patient-prescriptions/entities/pati
 import { PatientPrescription } from '../patient-prescriptions/entities/patient-prescription.entity';
 import { ConflictResolutionService, ConflictEntryLike } from './services/conflict-resolution.service';
 import {
+  FaixaEscalaGlicemicaDto,
   ConflitoAgendamentoDto,
   ContextoHorarioAgendadoDto,
   ScheduleEntryDto,
@@ -430,6 +431,8 @@ export class SchedulingService {
               dose.phase.id === phase.id,
           )
           .sort((a, b) => a.timeInMinutes - b.timeInMinutes);
+        const escala_glicemica = toGlycemiaScaleRanges(phase.glycemiaScaleRanges);
+        const escala_glicemica_label = toGlycemiaScaleLabel(escala_glicemica);
 
         const phaseEntries = phaseDoses.map((dose): ScheduleEntryDto => {
             const recorrencia_label = formatRecurrenceLabel(
@@ -479,6 +482,8 @@ export class SchedulingService {
               lateralidade_otologica_codigo,
               lateralidade_otologica_label,
               via_administracao_label,
+              escala_glicemica,
+              escala_glicemica_label,
               status_codigo: dose.status,
               status_label: toStatusLabel(dose.status),
               orientacao_clinica: dose.clinicalInstructionLabel ?? null,
@@ -511,6 +516,8 @@ export class SchedulingService {
           lateralidade_otologica_codigo,
           lateralidade_otologica_label,
           via_administracao_label,
+          escala_glicemica,
+          escala_glicemica_label,
           entradas: phaseEntries,
         };
       });
@@ -664,6 +671,26 @@ function toViaAdministracaoLabel(
   if (ocularLabel) return `Via ocular - ${ocularLabel}`;
   if (oticLabel) return `Via otológica - ${oticLabel}`;
   return viaAdministracao;
+}
+
+function toGlycemiaScaleRanges(
+  ranges: PatientPrescriptionPhase['glycemiaScaleRanges'],
+): FaixaEscalaGlicemicaDto[] | null {
+  if (!ranges?.length) return null;
+  return [...ranges]
+    .sort((a, b) => a.minimum - b.minimum)
+    .map((range) => ({
+      minimo: range.minimum,
+      maximo: range.maximum,
+      dose: range.doseValue,
+      unidade: range.doseUnit,
+      label_clinico: `Se glicemia entre ${range.minimum} e ${range.maximum}: aplicar ${range.doseValue} ${range.doseUnit}.`,
+    }));
+}
+
+function toGlycemiaScaleLabel(ranges: FaixaEscalaGlicemicaDto[] | null): string | null {
+  if (!ranges?.length) return null;
+  return ranges.map((range) => range.label_clinico).join(' ');
 }
 
 function shiftDateByDays(dateString: string, days: number): string {

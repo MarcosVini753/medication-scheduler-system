@@ -70,3 +70,10 @@ export interface PrescriptionPhaseDoseOverride {
   doseValue: string;
   doseUnit: DoseUnit;
 }
+
+export interface PrescriptionPhaseGlycemiaScaleRange {
+  minimum: number;
+  maximum: number;
+  doseValue: string;
+  doseUnit: DoseUnit;
+}

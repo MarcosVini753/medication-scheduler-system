@@ -4,7 +4,10 @@ import { OcularLaterality } from '../../../common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../../../common/enums/otic-laterality.enum';
 import { PrnReason } from '../../../common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
-import { PrescriptionPhaseDoseOverride } from './patient-prescription-snapshot.types';
+import {
+  PrescriptionPhaseDoseOverride,
+  PrescriptionPhaseGlycemiaScaleRange,
+} from './patient-prescription-snapshot.types';
 import { PatientPrescriptionMedication } from './patient-prescription-medication.entity';
 
 @Entity('patient_prescription_phases')
@@ -69,6 +72,9 @@ export class PatientPrescriptionPhase {
 
   @Column({ type: 'varchar', length: 30, nullable: true })
   oticLaterality?: OticLaterality;
+
+  @Column({ type: 'simple-json', nullable: true })
+  glycemiaScaleRanges?: PrescriptionPhaseGlycemiaScaleRange[];
 
   @Column({ default: false })
   manualAdjustmentEnabled: boolean;

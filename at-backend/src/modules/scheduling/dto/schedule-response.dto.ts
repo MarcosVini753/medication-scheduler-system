@@ -1,4 +1,5 @@
 import { PrnReason } from '../../../common/enums/prn-reason.enum';
+import { DoseUnit } from '../../../common/enums/dose-unit.enum';
 import { OcularLaterality } from '../../../common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../../../common/enums/otic-laterality.enum';
 import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
@@ -53,6 +54,14 @@ export interface ConflitoAgendamentoDto {
   janela_depois_minutos: number | null;
 }
 
+export interface FaixaEscalaGlicemicaDto {
+  minimo: number;
+  maximo: number;
+  dose: string;
+  unidade: DoseUnit;
+  label_clinico: string;
+}
+
 export interface ScheduleEntryDto {
   dose_horario_label: string;
   dose_valor: string | null;
@@ -73,6 +82,8 @@ export interface ScheduleEntryDto {
   lateralidade_otologica_codigo: OticLaterality | null;
   lateralidade_otologica_label: string | null;
   via_administracao_label: string;
+  escala_glicemica: FaixaEscalaGlicemicaDto[] | null;
+  escala_glicemica_label: string | null;
   status_codigo: string;
   status_label: string;
   orientacao_clinica: string | null;
@@ -92,6 +103,8 @@ export interface ScheduledPhaseDto {
   lateralidade_otologica_codigo: OticLaterality | null;
   lateralidade_otologica_label: string | null;
   via_administracao_label: string;
+  escala_glicemica: FaixaEscalaGlicemicaDto[] | null;
+  escala_glicemica_label: string | null;
   entradas: ScheduleEntryDto[];
 }
 

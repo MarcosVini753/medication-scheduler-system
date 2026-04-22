@@ -81,6 +81,8 @@ describe('SchedulingService final schedule JSON contract', () => {
       lateralidade_otologica_codigo: null,
       lateralidade_otologica_label: null,
       via_administracao_label: 'Via oral',
+      escala_glicemica: null,
+      escala_glicemica_label: null,
       entradas: expect.any(Array),
     });
     expect(phase.data_inicio).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
@@ -100,6 +102,8 @@ describe('SchedulingService final schedule JSON contract', () => {
       lateralidade_otologica_codigo: null,
       lateralidade_otologica_label: null,
       via_administracao_label: 'Via oral',
+      escala_glicemica: null,
+      escala_glicemica_label: null,
       status_codigo: ScheduleStatus.ACTIVE,
       status_label: expect.any(String),
       observacao: null,
@@ -296,6 +300,121 @@ describe('SchedulingService final schedule JSON contract', () => {
       lateralidade_otologica_codigo: OticLaterality.BOTH_EARS,
       lateralidade_otologica_label: 'nas 2 orelhas',
       via_administracao_label: 'Via otológica - nas 2 orelhas',
+    });
+  });
+
+  it('returns glycemia scale fields and clinical labels for rapid-insulin equivalent', async () => {
+    const { service } = createSchedulingService();
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: 'INSULINA RAPIDA',
+          activePrinciple: 'Insulina humana regular',
+          presentation: 'Frasco-ampola 10 ml',
+          administrationRoute: 'Via subcutânea',
+          usageInstructions: 'Aplicar conforme escala glicêmica.',
+          requiresGlycemiaScale: true,
+        },
+        phases: [
+          buildPhase({
+            frequency: 1,
+            doseAmount: '2 UI',
+            doseValue: '2',
+            doseUnit: DoseUnit.UI,
+            recurrenceType: TreatmentRecurrence.DAILY,
+            treatmentDays: 7,
+            glycemiaScaleRanges: [
+              { minimum: 70, maximum: 140, doseValue: '0', doseUnit: DoseUnit.UI },
+              { minimum: 141, maximum: 180, doseValue: '2', doseUnit: DoseUnit.UI },
+              { minimum: 181, maximum: 220, doseValue: '4', doseUnit: DoseUnit.UI },
+            ],
+          }),
+        ],
+      }),
+    ], { startedAt: '2026-03-01' });
+
+    const phase = result.medicamentos[0].fases[0];
+    const entry = phase.entradas[0];
+    expect(phase.escala_glicemica).toEqual([
+      {
+        minimo: 70,
+        maximo: 140,
+        dose: '0',
+        unidade: DoseUnit.UI,
+        label_clinico: 'Se glicemia entre 70 e 140: aplicar 0 UI.',
+      },
+      {
+        minimo: 141,
+        maximo: 180,
+        dose: '2',
+        unidade: DoseUnit.UI,
+        label_clinico: 'Se glicemia entre 141 e 180: aplicar 2 UI.',
+      },
+      {
+        minimo: 181,
+        maximo: 220,
+        dose: '4',
+        unidade: DoseUnit.UI,
+        label_clinico: 'Se glicemia entre 181 e 220: aplicar 4 UI.',
+      },
+    ]);
+    expect(phase.escala_glicemica_label).toBe(
+      'Se glicemia entre 70 e 140: aplicar 0 UI. Se glicemia entre 141 e 180: aplicar 2 UI. Se glicemia entre 181 e 220: aplicar 4 UI.',
+    );
+    expect(entry.escala_glicemica).toEqual(phase.escala_glicemica);
+    expect(entry.escala_glicemica_label).toBe(phase.escala_glicemica_label);
+  });
+
+  it('returns glycemia scale on all entries for ultra-rapid-insulin equivalent', async () => {
+    const { service } = createSchedulingService();
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: 'INSULINA ULTRA RAPIDA',
+          activePrinciple: 'Insulina lispro',
+          presentation: 'Caneta 3 ml',
+          administrationRoute: 'Via subcutânea',
+          usageInstructions: 'Aplicar antes das refeições conforme escala.',
+          requiresGlycemiaScale: true,
+        },
+        phases: [
+          buildPhase({
+            frequency: 2,
+            doseAmount: '3 UI',
+            doseValue: '3',
+            doseUnit: DoseUnit.UI,
+            recurrenceType: TreatmentRecurrence.DAILY,
+            treatmentDays: 5,
+            glycemiaScaleRanges: [
+              { minimum: 100, maximum: 150, doseValue: '2', doseUnit: DoseUnit.UI },
+              { minimum: 151, maximum: 200, doseValue: '4', doseUnit: DoseUnit.UI },
+            ],
+          }),
+        ],
+      }),
+    ]);
+
+    const phase = result.medicamentos[0].fases[0];
+    expect(phase.entradas).toHaveLength(2);
+    expect(phase.escala_glicemica).toEqual([
+      {
+        minimo: 100,
+        maximo: 150,
+        dose: '2',
+        unidade: DoseUnit.UI,
+        label_clinico: 'Se glicemia entre 100 e 150: aplicar 2 UI.',
+      },
+      {
+        minimo: 151,
+        maximo: 200,
+        dose: '4',
+        unidade: DoseUnit.UI,
+        label_clinico: 'Se glicemia entre 151 e 200: aplicar 4 UI.',
+      },
+    ]);
+    phase.entradas.forEach((entry) => {
+      expect(entry.escala_glicemica).toEqual(phase.escala_glicemica);
+      expect(entry.escala_glicemica_label).toBe(phase.escala_glicemica_label);
     });
   });
 });

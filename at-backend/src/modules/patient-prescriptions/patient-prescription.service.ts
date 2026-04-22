@@ -56,6 +56,7 @@ export class PatientPrescriptionService {
 
           this.ensureSequentialPhaseOrders(medicationDto.phases);
           this.ensureLateralityCompatibility(clinicalMedication, medicationDto.phases);
+          this.ensureGlycemiaScaleCompatibility(clinicalMedication, medicationDto.phases);
           this.ensureProtocolSupportsPhases(
             protocolSnapshotFromEntity(protocol),
             medicationDto.phases,
@@ -231,6 +232,71 @@ export class PatientPrescriptionService {
       if (phase.ocularLaterality || phase.oticLaterality) {
         throw new UnprocessableEntityException(
           `Medicamento ${medication.id} não é ocular/otológico e não aceita lateralidade na fase ${phase.phaseOrder}.`,
+        );
+      }
+    });
+  }
+
+  private ensureGlycemiaScaleCompatibility(
+    medication: Awaited<ReturnType<ClinicalCatalogService['findMedicationById']>>,
+    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+  ): void {
+    const requiresGlycemiaScale = Boolean(medication.requiresGlycemiaScale);
+
+    phases.forEach((phase) => {
+      const ranges = phase.glycemiaScaleRanges;
+      if (requiresGlycemiaScale) {
+        if (!ranges?.length) {
+          throw new UnprocessableEntityException(
+            `Medicamento ${medication.id} exige glycemiaScaleRanges na fase ${phase.phaseOrder}.`,
+          );
+        }
+        this.ensureValidGlycemiaScaleRanges(
+          medication.id,
+          phase.phaseOrder,
+          ranges,
+        );
+        return;
+      }
+
+      if (ranges?.length) {
+        throw new UnprocessableEntityException(
+          `Medicamento ${medication.id} não aceita glycemiaScaleRanges na fase ${phase.phaseOrder}.`,
+        );
+      }
+    });
+  }
+
+  private ensureValidGlycemiaScaleRanges(
+    medicationId: string,
+    phaseOrder: number,
+    ranges: NonNullable<
+      CreatePatientPrescriptionDto['medications'][number]['phases'][number]['glycemiaScaleRanges']
+    >,
+  ): void {
+    const sortedRanges = [...ranges].sort((a, b) => a.minimum - b.minimum);
+
+    sortedRanges.forEach((range, index) => {
+      if (range.maximum < range.minimum) {
+        throw new UnprocessableEntityException(
+          `glycemiaScaleRanges inválida no medicamento ${medicationId} fase ${phaseOrder}: maximum menor que minimum.`,
+        );
+      }
+
+      if (index === 0) {
+        return;
+      }
+
+      const previousRange = sortedRanges[index - 1];
+      if (range.minimum <= previousRange.maximum) {
+        throw new UnprocessableEntityException(
+          `glycemiaScaleRanges inválida no medicamento ${medicationId} fase ${phaseOrder}: faixas com sobreposição.`,
+        );
+      }
+
+      if (range.minimum !== previousRange.maximum + 1) {
+        throw new UnprocessableEntityException(
+          `glycemiaScaleRanges inválida no medicamento ${medicationId} fase ${phaseOrder}: faixas com lacuna.`,
         );
       }
     });

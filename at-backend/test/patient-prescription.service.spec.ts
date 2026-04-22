@@ -198,6 +198,30 @@ describe('PatientPrescriptionService', () => {
     );
   }
 
+  function buildPhasePayload(overrides: Record<string, unknown> = {}) {
+    return {
+      phaseOrder: 1,
+      frequency: 1,
+      sameDosePerSchedule: true,
+      doseAmount: '1 COMP',
+      doseValue: '1',
+      doseUnit: DoseUnit.COMP,
+      recurrenceType: TreatmentRecurrence.DAILY,
+      treatmentDays: 10,
+      continuousUse: false,
+      manualAdjustmentEnabled: false,
+      ...overrides,
+    } as never;
+  }
+
+  function buildGlycemiaRanges() {
+    return [
+      { minimum: 70, maximum: 140, doseValue: '0', doseUnit: DoseUnit.UI },
+      { minimum: 141, maximum: 180, doseValue: '2', doseUnit: DoseUnit.UI },
+      { minimum: 181, maximum: 220, doseValue: '4', doseUnit: DoseUnit.UI },
+    ];
+  }
+
   it('creates a patient prescription from clinicalMedicationId and protocolId with full snapshots', async () => {
     const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
       createService();
@@ -1075,6 +1099,224 @@ describe('PatientPrescriptionService', () => {
                 ocularLaterality: OcularLaterality.RIGHT_EYE,
                 oticLaterality: OticLaterality.RIGHT_EAR,
               } as never,
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('accepts rapid insulin equivalent with valid glycemia scale', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+    const glycemiaScaleRanges = buildGlycemiaRanges();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      commercialName: 'INSULINA RAPIDA',
+      administrationRoute: 'SC',
+      requiresGlycemiaScale: true,
+    });
+    mockLoadedPrescriptionForLaterality(prescriptionRepository, {
+      doseAmount: '2 UI',
+      doseValue: '2',
+      doseUnit: DoseUnit.UI,
+      glycemiaScaleRanges,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                doseAmount: '2 UI',
+                doseValue: '2',
+                doseUnit: DoseUnit.UI,
+                glycemiaScaleRanges,
+              }),
+            ],
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+  });
+
+  it('accepts ultra-rapid insulin equivalent with valid glycemia scale', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+    const glycemiaScaleRanges = buildGlycemiaRanges();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      commercialName: 'INSULINA ULTRA RAPIDA',
+      administrationRoute: 'SC',
+      requiresGlycemiaScale: true,
+    });
+    mockLoadedPrescriptionForLaterality(prescriptionRepository, {
+      doseAmount: '3 UI',
+      doseValue: '3',
+      doseUnit: DoseUnit.UI,
+      glycemiaScaleRanges,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                doseAmount: '3 UI',
+                doseValue: '3',
+                doseUnit: DoseUnit.UI,
+                glycemiaScaleRanges,
+              }),
+            ],
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+  });
+
+  it('rejects medication that requires glycemia scale when phase does not provide ranges', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      requiresGlycemiaScale: true,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [buildPhasePayload()],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects glycemia scale for medication that is not compatible', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      requiresGlycemiaScale: false,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                glycemiaScaleRanges: buildGlycemiaRanges(),
+              }),
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects glycemia scale ranges with overlap', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      requiresGlycemiaScale: true,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                glycemiaScaleRanges: [
+                  { minimum: 70, maximum: 140, doseValue: '0', doseUnit: DoseUnit.UI },
+                  { minimum: 140, maximum: 180, doseValue: '2', doseUnit: DoseUnit.UI },
+                ],
+              }),
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects glycemia scale ranges with gap', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      requiresGlycemiaScale: true,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                glycemiaScaleRanges: [
+                  { minimum: 70, maximum: 140, doseValue: '0', doseUnit: DoseUnit.UI },
+                  { minimum: 142, maximum: 180, doseValue: '2', doseUnit: DoseUnit.UI },
+                ],
+              }),
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects glycemia scale ranges when maximum is lower than minimum', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      requiresGlycemiaScale: true,
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                glycemiaScaleRanges: [
+                  { minimum: 180, maximum: 140, doseValue: '2', doseUnit: DoseUnit.UI },
+                ],
+              }),
             ],
           },
         ],

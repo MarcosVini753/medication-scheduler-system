@@ -113,6 +113,27 @@ describe('New DTO clinical validation', () => {
     expect(oticErrors.some((message) => message.includes('oticLaterality'))).toBe(true);
   });
 
+  it('accepts valid glycemiaScaleRanges payload', () => {
+    expect(
+      validatePhase({
+        glycemiaScaleRanges: [
+          { minimum: 140, maximum: 180, doseValue: '2', doseUnit: DoseUnit.UI },
+          { minimum: 181, maximum: 220, doseValue: '4', doseUnit: DoseUnit.UI },
+        ],
+      }),
+    ).toHaveLength(0);
+  });
+
+  it('rejects invalid glycemiaScaleRanges unit', () => {
+    const errors = validatePhase({
+      glycemiaScaleRanges: [
+        { minimum: 140, maximum: 180, doseValue: '2', doseUnit: 'INVALID' as DoseUnit },
+      ],
+    });
+
+    expect(errors.some((message) => message.includes('doseUnit'))).toBe(true);
+  });
+
   it('rejects clinical medication creation without protocol frequencies and steps', () => {
     const dto = plainToInstance(CreateClinicalMedicationDto, {
       activePrinciple: 'Teste',

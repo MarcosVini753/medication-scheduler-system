@@ -35,6 +35,25 @@ export class CreatePatientPrescriptionPhaseDoseOverrideDto {
   doseUnit: DoseUnit;
 }
 
+export class CreatePatientPrescriptionGlycemiaScaleRangeDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  minimum: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maximum: number;
+
+  @Transform(({ value }) => (value === null || value === undefined ? value : String(value)))
+  @IsString()
+  doseValue: string;
+
+  @IsEnum(DoseUnit)
+  doseUnit: DoseUnit;
+}
+
 export class CreatePatientPrescriptionPhaseDto {
   @IsPatientPrescriptionPhaseValid()
   private readonly phaseValidation: boolean;
@@ -119,6 +138,13 @@ export class CreatePatientPrescriptionPhaseDto {
   @IsOptional()
   @IsEnum(OticLaterality)
   oticLaterality?: OticLaterality;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CreatePatientPrescriptionGlycemiaScaleRangeDto)
+  glycemiaScaleRanges?: CreatePatientPrescriptionGlycemiaScaleRangeDto[];
 
   @IsBoolean()
   manualAdjustmentEnabled: boolean;
