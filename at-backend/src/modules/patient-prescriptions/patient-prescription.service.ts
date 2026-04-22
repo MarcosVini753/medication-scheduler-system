@@ -908,6 +908,24 @@ export class PatientPrescriptionService {
           'isContraceptiveMonthly=true',
         );
       }
+      if (phase.monthlySpecialReference !== MonthlySpecialReference.MENSTRUATION_START) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'monthlySpecialReference',
+          `=${phase.monthlySpecialReference} é inválido`,
+          'isContraceptiveMonthly=true exige MENSTRUATION_START',
+        );
+      }
+      if (phase.monthlySpecialOffsetDays <= 0) {
+        this.throwPhaseDomainError(
+          medicationId,
+          phase.phaseOrder,
+          'monthlySpecialOffsetDays',
+          `=${phase.monthlySpecialOffsetDays} é inválido`,
+          'isContraceptiveMonthly=true exige valor > 0',
+        );
+      }
       if (phase.monthlyDay !== undefined) {
         this.throwPhaseDomainError(
           medicationId,

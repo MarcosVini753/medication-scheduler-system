@@ -1351,7 +1351,7 @@ describe('PatientPrescriptionService', () => {
       recurrenceType: TreatmentRecurrence.MONTHLY,
       monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
       monthlySpecialBaseDate: '2026-02-20',
-      monthlySpecialOffsetDays: 8,
+      monthlySpecialOffsetDays: 12,
       monthlyDay: undefined,
     });
 
@@ -1368,7 +1368,7 @@ describe('PatientPrescriptionService', () => {
                 recurrenceType: TreatmentRecurrence.MONTHLY,
                 monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
                 monthlySpecialBaseDate: '2026-02-20',
-                monthlySpecialOffsetDays: 8,
+                monthlySpecialOffsetDays: 12,
                 monthlyDay: undefined,
               }),
             ],
@@ -1378,6 +1378,68 @@ describe('PatientPrescriptionService', () => {
     ).resolves.toBeDefined();
 
     expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+  });
+
+  it('rejects monthly contraceptive with non-positive monthlySpecialOffsetDays', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      isContraceptiveMonthly: true,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                recurrenceType: TreatmentRecurrence.MONTHLY,
+                monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
+                monthlySpecialBaseDate: '2026-02-20',
+                monthlySpecialOffsetDays: 0,
+                monthlyDay: undefined,
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: monthlySpecialOffsetDays deve ser maior que zero quando monthlySpecial* for informado.',
+    );
+  });
+
+  it('rejects monthly contraceptive with recurrenceType different from MONTHLY', async () => {
+    const { service, clinicalCatalogService } = createService();
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol(),
+      isContraceptiveMonthly: true,
+    });
+
+    await expectDomainErrorMessage(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              buildPhasePayload({
+                recurrenceType: TreatmentRecurrence.DAILY,
+                monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
+                monthlySpecialBaseDate: '2026-02-20',
+                monthlySpecialOffsetDays: 8,
+                monthlyDay: undefined,
+              }),
+            ],
+          },
+        ],
+      }),
+      'Fase 1: recurrenceType =DAILY é inválido para medicamento clinical-1 (isContraceptiveMonthly=true exige MONTHLY).',
+    );
   });
 
   it('rejects monthly contraceptive without monthly special rule', async () => {

@@ -863,7 +863,7 @@ function toMonthlySpecialReferenceLabel(reference: MonthlySpecialReference): str
 }
 
 function toMonthlySpecialDescription(offsetDays: number): string {
-  return `Mensal: ${offsetDays} dias após início da menstruação.`;
+  return `Primeira aplicação: ${offsetDays}º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.`;
 }
 
 function toGlycemiaScaleRanges(

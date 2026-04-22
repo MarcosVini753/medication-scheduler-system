@@ -109,6 +109,14 @@ export function getPhaseValidationError(phase: PhaseLike): string | undefined {
   }
 
   if (
+    hasMonthlySpecialOffsetDays &&
+    phase.monthlySpecialOffsetDays !== undefined &&
+    phase.monthlySpecialOffsetDays <= 0
+  ) {
+    return 'monthlySpecialOffsetDays deve ser maior que zero quando monthlySpecial* for informado.';
+  }
+
+  if (
     phase.recurrenceType === TreatmentRecurrence.ALTERNATE_DAYS &&
     phase.alternateDaysInterval === undefined
   ) {

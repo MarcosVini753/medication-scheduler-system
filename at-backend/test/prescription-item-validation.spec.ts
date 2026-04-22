@@ -133,6 +133,18 @@ describe('New DTO clinical validation', () => {
     expect(errors.some((message) => message.includes('monthlySpecialOffsetDays'))).toBe(true);
   });
 
+  it('rejects zero monthlySpecialOffsetDays', () => {
+    const errors = validatePhase({
+      recurrenceType: TreatmentRecurrence.MONTHLY,
+      monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
+      monthlySpecialBaseDate: '2026-02-20',
+      monthlySpecialOffsetDays: 0,
+    });
+    expect(errors).toContain(
+      'monthlySpecialOffsetDays deve ser maior que zero quando monthlySpecial* for informado.',
+    );
+  });
+
   it('rejects manual adjustment without manualTimes', () => {
     expect(
       validatePhase({

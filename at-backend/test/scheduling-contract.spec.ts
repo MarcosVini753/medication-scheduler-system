@@ -579,20 +579,24 @@ describe('SchedulingService final schedule JSON contract', () => {
       data_base_clinica: '20/02/2026',
       deslocamento_dias: 8,
       data_referencia_regra: '28/02/2026',
-      descricao_regra_mensal: 'Mensal: 8 dias após início da menstruação.',
+      descricao_regra_mensal:
+        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
     });
 
     expect(entry).toMatchObject({
       recorrencia_codigo: TreatmentRecurrence.MONTHLY,
-      recorrencia_label: 'Mensal: 8 dias após início da menstruação.',
-      regra_mensal: 'Mensal: 8 dias após início da menstruação.',
+      recorrencia_label:
+        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
+      regra_mensal:
+        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
       dia_mensal: null,
       regra_mensal_especial_codigo: MonthlySpecialReference.MENSTRUATION_START,
       regra_mensal_especial_label: 'Início da menstruação',
       data_base_clinica: '20/02/2026',
       deslocamento_dias: 8,
       data_referencia_regra: '28/02/2026',
-      descricao_regra_mensal: 'Mensal: 8 dias após início da menstruação.',
+      descricao_regra_mensal:
+        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
     });
   });
 
