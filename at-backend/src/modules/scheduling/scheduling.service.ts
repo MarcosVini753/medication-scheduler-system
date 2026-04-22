@@ -49,7 +49,7 @@ export class SchedulingService {
   ): Promise<SchedulingResultDto> {
     const anchors = await this.resolveScheduleAnchors(prescription);
     let entries = this.buildBaseEntries(prescription, anchors);
-    entries = this.applyConflictRules(entries, anchors);
+    entries = this.applyConflictRules(entries);
     entries = entries.map((entry) => ({
       ...entry,
       timeFormatted: minutesToHhmm(entry.timeInMinutes),
@@ -284,12 +284,9 @@ export class SchedulingService {
     };
   }
 
-  private applyConflictRules(
-    entries: WorkingEntry[],
-    anchors: ScheduleAnchors,
-  ): WorkingEntry[] {
+  private applyConflictRules(entries: WorkingEntry[]): WorkingEntry[] {
     const normalized = entries.map((entry) => ({ ...entry }));
-    this.conflictResolutionService.apply(normalized, anchors);
+    this.conflictResolutionService.apply(normalized);
     return normalized;
   }
 

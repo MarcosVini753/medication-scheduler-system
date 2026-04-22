@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ClinicalAnchor } from '../../../common/enums/clinical-anchor.enum';
 import { ClinicalInteractionType } from '../../../common/enums/clinical-interaction-type.enum';
 import { ClinicalResolutionType } from '../../../common/enums/clinical-resolution-type.enum';
 import { ClinicalSemanticTag } from '../../../common/enums/clinical-semantic-tag.enum';
@@ -31,12 +30,8 @@ interface RuleImpact {
 
 @Injectable()
 export class ConflictResolutionService {
-  apply(
-    entries: ConflictEntryLike[],
-    anchors: Record<ClinicalAnchor, number>,
-  ): void {
+  apply(entries: ConflictEntryLike[]): void {
     this.applyInteractionRules(entries);
-    this.applySucralfateProtocolFallback(entries, anchors);
   }
 
   private applyInteractionRules(entries: ConflictEntryLike[]): void {
@@ -87,18 +82,8 @@ export class ConflictResolutionService {
   ): void {
     entry.conflict = this.buildConflict(impact);
 
-    if (impact.rule.resolutionType === ClinicalResolutionType.INACTIVATE_SOURCE) {
-      entry.status = ScheduleStatus.INACTIVE;
-      entry.note = `Dose inativada por conflito com ${impact.targetEntry.medicationName}.`;
-      return;
-    }
-
-    if (
-      impact.rule.resolutionType ===
-      ClinicalResolutionType.REQUIRE_MANUAL_ADJUSTMENT
-    ) {
-      entry.status = ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED;
-      entry.note = `ajuste manual exigido por conflito com ${impact.targetEntry.medicationName}.`;
+    if (impact.rule.resolutionType !== ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW) {
+      this.applyTerminalResolution(entry, impact, false);
       return;
     }
 
@@ -123,71 +108,28 @@ export class ConflictResolutionService {
 
     if (persistentImpacts.length > 0) {
       const persistentImpact = persistentImpacts[0];
-      entry.status = ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED;
-      entry.note = `ajuste manual exigido após conflito persistente com ${persistentImpact.targetEntry.medicationName}.`;
       entry.conflict = this.buildConflict(persistentImpact);
+      this.applyTerminalResolution(entry, persistentImpact, true);
     }
   }
 
-  private applySucralfateProtocolFallback(
-    entries: ConflictEntryLike[],
-    anchors: Record<ClinicalAnchor, number>,
+  private applyTerminalResolution(
+    entry: ConflictEntryLike,
+    impact: RuleImpact,
+    persistent: boolean,
   ): void {
-    const sucralfateEntries = entries.filter(
-      (entry) =>
-        entry.groupCode === 'GROUP_II_SUCRA' &&
-        entry.status === ScheduleStatus.ACTIVE &&
-        entry.timeContext.anchor !== ClinicalAnchor.DORMIR,
-    );
-
-    sucralfateEntries.forEach((entry) => {
-      const primaryConflict = entries.find(
-        (other) =>
-          other !== entry &&
-          other.status === ScheduleStatus.ACTIVE &&
-          other.timeInMinutes === entry.timeInMinutes,
-      );
-      if (!primaryConflict) return;
-
-      const alternative = anchors[ClinicalAnchor.ALMOCO] + 120;
-      const alternativeConflict = entries.find(
-        (other) =>
-          other !== entry &&
-          other.status === ScheduleStatus.ACTIVE &&
-          other.timeInMinutes === alternative,
-      );
-
-      if (!alternativeConflict) {
-        entry.timeInMinutes = alternative;
-        entry.note =
-          'Sucralfato deslocado para almoço + 2h por conflito no horário principal.';
-        entry.conflict = {
-          interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
-          resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
-          triggerMedicationName: primaryConflict.medicationName,
-          triggerGroupCode: primaryConflict.groupCode,
-          triggerProtocolCode: primaryConflict.protocolCode,
-          rulePriority: entry.conflict?.rulePriority ?? 0,
-          windowBeforeMinutes: 0,
-          windowAfterMinutes: 0,
-        };
-        return;
-      }
-
+    if (impact.rule.resolutionType === ClinicalResolutionType.INACTIVATE_SOURCE) {
       entry.status = ScheduleStatus.INACTIVE;
-      entry.note =
-        'Sucralfato inativado por conflito no horário principal e no alternativo.';
-      entry.conflict = {
-        interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
-        resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
-        triggerMedicationName: alternativeConflict.medicationName,
-        triggerGroupCode: alternativeConflict.groupCode,
-        triggerProtocolCode: alternativeConflict.protocolCode,
-        rulePriority: entry.conflict?.rulePriority ?? 0,
-        windowBeforeMinutes: 0,
-        windowAfterMinutes: 0,
-      };
-    });
+      entry.note = persistent
+        ? `Dose inativada após conflito persistente com ${impact.targetEntry.medicationName}.`
+        : `Dose inativada por conflito com ${impact.targetEntry.medicationName}.`;
+      return;
+    }
+
+    entry.status = ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED;
+    entry.note = persistent
+      ? `ajuste manual exigido após conflito persistente com ${impact.targetEntry.medicationName}.`
+      : `ajuste manual exigido por conflito com ${impact.targetEntry.medicationName}.`;
   }
 
   private matchesRule(

@@ -1,10 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ClinicalAnchor } from '../../common/enums/clinical-anchor.enum';
 import { ClinicalInteractionType } from '../../common/enums/clinical-interaction-type.enum';
 import { ClinicalResolutionType } from '../../common/enums/clinical-resolution-type.enum';
 import { ClinicalSemanticTag } from '../../common/enums/clinical-semantic-tag.enum';
 import { GroupCode } from '../../common/enums/group-code.enum';
+import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
 import {
   CreateClinicalMedicationDto,
   CreateClinicalProtocolDto,
@@ -134,7 +136,7 @@ export class ClinicalCatalogService {
       },
     ];
 
-    const existing = await this.clinicalGroupRepository.find();
+    const existing = (await this.clinicalGroupRepository.find()) ?? [];
     const existingCodes = new Set(existing.map((group) => group.code));
     const missing = defaults.filter((group) => !existingCodes.has(group.code));
     if (missing.length > 0) {
@@ -142,7 +144,516 @@ export class ClinicalCatalogService {
         missing.map((group) => this.clinicalGroupRepository.create(group)),
       );
     }
-    return this.listGroups();
+
+    const groups = await this.listGroups();
+    const groupsByCode = new Map(groups.map((group) => [group.code, group]));
+    await this.seedDefaultClinicalMedications(groupsByCode);
+    return groups;
+  }
+
+  private async seedDefaultClinicalMedications(
+    groupsByCode: Map<string, ClinicalGroup>,
+  ): Promise<void> {
+    const seedMedications = this.defaultMedicationSeedData();
+    const existingMedications = (await this.clinicalMedicationRepository.find()) ?? [];
+    const medicationByKey = new Map(
+      existingMedications.map((medication) => [
+        this.buildMedicationSeedKey(
+          medication.commercialName,
+          medication.activePrinciple,
+        ),
+        medication,
+      ]),
+    );
+    const existingProtocolCodes = new Set(
+      existingMedications.flatMap((medication) =>
+        (medication.protocols ?? []).map((protocol) => protocol.code),
+      ),
+    );
+
+    for (const seedMedication of seedMedications) {
+      const protocolsToCreate = seedMedication.protocols.filter(
+        (protocol) => !existingProtocolCodes.has(protocol.code),
+      );
+      if (protocolsToCreate.length === 0) {
+        continue;
+      }
+
+      const medicationKey = this.buildMedicationSeedKey(
+        seedMedication.commercialName,
+        seedMedication.activePrinciple,
+      );
+      const existingMedication = medicationByKey.get(medicationKey);
+
+      if (existingMedication) {
+        existingMedication.protocols = [
+          ...(existingMedication.protocols ?? []),
+          ...protocolsToCreate.map((protocolDto) =>
+            this.buildProtocol(protocolDto, groupsByCode),
+          ),
+        ];
+        await this.clinicalMedicationRepository.save(existingMedication);
+      } else {
+        const medication = this.clinicalMedicationRepository.create({
+          commercialName: seedMedication.commercialName,
+          activePrinciple: seedMedication.activePrinciple,
+          presentation: seedMedication.presentation,
+          pharmaceuticalForm: seedMedication.pharmaceuticalForm,
+          administrationRoute: seedMedication.administrationRoute,
+          usageInstructions: seedMedication.usageInstructions,
+          diluentType: seedMedication.diluentType,
+          defaultAdministrationUnit: seedMedication.defaultAdministrationUnit,
+          supportsManualAdjustment: seedMedication.supportsManualAdjustment ?? false,
+          isOphthalmic: seedMedication.isOphthalmic ?? false,
+          isOtic: seedMedication.isOtic ?? false,
+          isContraceptiveMonthly: seedMedication.isContraceptiveMonthly ?? false,
+          requiresGlycemiaScale: seedMedication.requiresGlycemiaScale ?? false,
+          notes: seedMedication.notes,
+          isDefault: seedMedication.isDefault ?? false,
+          protocols: protocolsToCreate.map((protocolDto) =>
+            this.buildProtocol(protocolDto, groupsByCode),
+          ),
+        });
+        const saved = await this.clinicalMedicationRepository.save(medication);
+        medicationByKey.set(medicationKey, saved);
+      }
+
+      protocolsToCreate.forEach((protocol) => existingProtocolCodes.add(protocol.code));
+    }
+  }
+
+  private buildMedicationSeedKey(
+    commercialName: string | undefined,
+    activePrinciple: string,
+  ): string {
+    const normalizedCommercial = (commercialName ?? '').trim().toLowerCase();
+    const normalizedPrinciple = activePrinciple.trim().toLowerCase();
+    return `${normalizedCommercial}::${normalizedPrinciple}`;
+  }
+
+  private defaultMedicationSeedData(): CreateClinicalMedicationDto[] {
+    return [
+      {
+        commercialName: 'LOSARTANA',
+        activePrinciple: 'Losartana potassica',
+        presentation: 'Comprimido revestido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Conforme prescricao.',
+        protocols: [
+          {
+            code: 'GROUP_I_STANDARD',
+            name: 'Grupo I padrao',
+            description: 'Protocolo padrão para medicamentos independentes de refeição.',
+            groupCode: GroupCode.GROUP_I,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                label: '1x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                label: '2x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 3,
+                label: '3x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.LANCHE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D3',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+            interactionRules: [
+              {
+                interactionType: ClinicalInteractionType.AFFECTED_BY_SALTS,
+                targetGroupCode: GroupCode.GROUP_III_SAL,
+                resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+                priority: 50,
+              },
+              {
+                interactionType: ClinicalInteractionType.AFFECTED_BY_CALCIUM,
+                targetGroupCode: GroupCode.GROUP_III_CALC,
+                resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+                windowMinutes: 60,
+                priority: 60,
+              },
+              {
+                interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+                targetGroupCode: GroupCode.GROUP_II_SUCRA,
+                resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+                windowMinutes: 420,
+                priority: 70,
+                applicableSemanticTags: [ClinicalSemanticTag.STANDARD],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'ALENDRONATO',
+        activePrinciple: 'Alendronato de sodio',
+        presentation: 'Comprimido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Administrar em jejum com agua.',
+        protocols: [
+          {
+            code: 'GROUP_II_BIFOS_STANDARD',
+            name: 'Grupo II Bifosfonatos',
+            description: 'Protocolos para bifosfonatos em jejum.',
+            groupCode: GroupCode.GROUP_II_BIFOS,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                label: '1x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: -60,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'GLIFAGE',
+        activePrinciple: 'Metformina',
+        presentation: 'Comprimido revestido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Tomar junto das refeicoes.',
+        protocols: [
+          {
+            code: 'GROUP_III_MET_STANDARD',
+            name: 'Grupo III Met',
+            description: 'Metformina em refeicoes principais.',
+            groupCode: GroupCode.GROUP_III_MET,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 3,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.ALMOCO,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D3',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'GASTROGEL',
+        activePrinciple: 'Hidroxido de aluminio + Hidroxido de magnesio',
+        presentation: 'Suspensao oral',
+        pharmaceuticalForm: 'Suspensao',
+        administrationRoute: 'VO',
+        usageInstructions: 'Agite o frasco antes de usar.',
+        protocols: [
+          {
+            code: 'GROUP_III_SAL_STANDARD',
+            name: 'Grupo III Sal',
+            description: 'Sais com regra de inativação por conflito.',
+            groupCode: GroupCode.GROUP_III_SAL,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ALMOCO,
+                    offsetMinutes: 120,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 120,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'SUCRAFILM',
+        activePrinciple: 'Sucralfato 200mg/ml',
+        presentation: 'Suspensao oral 10 ml',
+        pharmaceuticalForm: 'Suspensao',
+        administrationRoute: 'VO',
+        usageInstructions: '1 hora antes ou 2 horas apos as refeicoes.',
+        protocols: [
+          {
+            code: 'GROUP_II_SUCRA_STANDARD',
+            name: 'Grupo II Sucralfato',
+            description: 'Sucralfato com dose matinal e dose de dormir.',
+            groupCode: GroupCode.GROUP_II_SUCRA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 120,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 120,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: 0,
+                    semanticTag: ClinicalSemanticTag.BEDTIME_SLOT,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'CALCIO',
+        activePrinciple: 'Carbonato de calcio',
+        presentation: 'Comprimido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Usar afastado de interacoes clinicas.',
+        protocols: [
+          {
+            code: 'GROUP_III_CALC_STANDARD',
+            name: 'Grupo III Calcio',
+            description: 'Calcio com deslocamento configurável por janela.',
+            groupCode: GroupCode.GROUP_III_CALC,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 180,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 180,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'CLONAZEPAM',
+        activePrinciple: 'Clonazepam',
+        presentation: 'Comprimido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Administrar 20 minutos antes de dormir.',
+        protocols: [
+          {
+            code: 'GROUP_I_SED_STANDARD',
+            name: 'Grupo I Sedativo',
+            description: 'Sedativo pré-sono com semântica de dormir.',
+            groupCode: GroupCode.GROUP_I_SED,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: -20,
+                    semanticTag: ClinicalSemanticTag.BEDTIME_EQUIVALENT,
+                  },
+                ],
+              },
+            ],
+            interactionRules: [
+              {
+                interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+                targetGroupCode: GroupCode.GROUP_II_SUCRA,
+                resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+                windowMinutes: 20,
+                priority: 100,
+                applicableSemanticTags: [ClinicalSemanticTag.BEDTIME_EQUIVALENT],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'METRONIDAZOL',
+        activePrinciple: 'Metronidazol 100mg/g',
+        presentation: 'Gel vaginal 50 g',
+        pharmaceuticalForm: 'Gel',
+        administrationRoute: 'VIA VAGINAL',
+        usageInstructions: 'Introduzir aplicador profundamente antes de dormir.',
+        protocols: [
+          {
+            code: 'DELTA_METRONIDAZOL_VAGINAL',
+            name: 'Metronidazol vaginal',
+            description: 'Aplicação vaginal no período de dormir.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: -20,
+                    semanticTag: ClinicalSemanticTag.BEDTIME_EQUIVALENT,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'CETOCONAZOL',
+        activePrinciple: 'Cetoconazol 20mg/g',
+        presentation: 'Creme 30 g',
+        pharmaceuticalForm: 'Creme',
+        administrationRoute: 'USO TOPICO',
+        usageInstructions: 'Aplicar na área afetada uma vez ao dia.',
+        protocols: [
+          {
+            code: 'DELTA_CETOCONAZOL_TOPICO',
+            name: 'Cetoconazol topico',
+            description: 'Uso tópico diário no almoço.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ALMOCO,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
   }
 
   private buildProtocol(

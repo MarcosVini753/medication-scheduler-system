@@ -196,22 +196,31 @@ describe('SchedulingService PDF core rules', () => {
       });
     });
 
-    it('moves SUCRAFILM D1 to 15:00 when another medication occupies 08:00', async () => {
+    it('moves SUCRAFILM D1 to 15:00 when an explicit sucralfate rule conflicts at 08:00', async () => {
       const { service } = createSchedulingService({ routine });
 
-      const occupiedMorning = buildPrescriptionMedication({
+      const morningInteractor = buildPrescriptionMedication({
         medicationSnapshot: {
-          commercialName: 'MACROGOL',
-          activePrinciple: 'Macrogol',
-          presentation: 'Solucao oral',
+          commercialName: 'LOSARTANA',
+          activePrinciple: 'Losartana potassica',
+          presentation: 'Comprimido revestido',
           administrationRoute: 'VO',
-          usageInstructions: 'Usar conforme orientacao.',
+          usageInstructions: 'Conforme orientacao clinica.',
         },
         protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I),
+        interactionRulesSnapshot: [
+          buildInteractionRule({
+            interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+            targetGroupCode: GroupCode.GROUP_II_SUCRA,
+            resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+            windowMinutes: 420,
+            priority: 100,
+          }),
+        ],
         phases: [
           buildPhase({
             frequency: 1,
-            doseAmount: '17 G',
+            doseAmount: '1 COMP',
             manualAdjustmentEnabled: true,
             manualTimes: ['08:00'],
             treatmentDays: 30,
@@ -221,14 +230,21 @@ describe('SchedulingService PDF core rules', () => {
 
       const result = await buildScheduleResult(service, [
         buildSucralfatoMedication(),
-        occupiedMorning,
+        morningInteractor,
       ]);
 
       const movedEntry = findEntryByTime(result, 'SUCRAFILM', '15:00');
       expectEntry(movedEntry, {
         administrationLabel: '10 ML',
       });
-      expect(movedEntry?.note).toContain('almoço + 2h');
+      expect(movedEntry?.timeContext.originalTimeFormatted).toBe('08:00');
+      expect(movedEntry?.timeContext.resolvedTimeFormatted).toBe('15:00');
+      expect(movedEntry?.conflict).toMatchObject({
+        interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+        resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+        triggerMedicationName: 'LOSARTANA',
+        windowAfterMinutes: 420,
+      });
       expect(findEntryByTime(result, 'SUCRAFILM', '08:00')).toBeUndefined();
       expect(findEntriesByMedicationAndTime(result, 'SUCRAFILM', '15:00')).toHaveLength(1);
       expectEntry(findEntryByTime(result, 'SUCRAFILM', '21:00'), {
@@ -271,18 +287,27 @@ describe('SchedulingService PDF core rules', () => {
       });
     });
 
-    it('inactivates SUCRAFILM D1 when both 08:00 and the fallback 15:00 are occupied', async () => {
+    it('inactivates SUCRAFILM D1 when rule-driven conflicts exist at 08:00 and again at 15:00', async () => {
       const { service } = createSchedulingService({ routine });
 
       const morningBlock = buildPrescriptionMedication({
         medicationSnapshot: {
-          commercialName: 'BLOQUEIO MANHA',
-          activePrinciple: 'Bloqueio manha',
+          commercialName: 'LOSARTANA MANHA',
+          activePrinciple: 'Losartana matinal',
           presentation: 'Comprimido',
           administrationRoute: 'VO',
-          usageInstructions: 'Horario fixo de teste.',
+          usageInstructions: 'Interacao matinal canônica.',
         },
         protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I),
+        interactionRulesSnapshot: [
+          buildInteractionRule({
+            interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+            targetGroupCode: GroupCode.GROUP_II_SUCRA,
+            resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+            windowMinutes: 420,
+            priority: 100,
+          }),
+        ],
         phases: [
           buildPhase({
             frequency: 1,
@@ -295,13 +320,21 @@ describe('SchedulingService PDF core rules', () => {
 
       const afternoonBlock = buildPrescriptionMedication({
         medicationSnapshot: {
-          commercialName: 'BLOQUEIO TARDE',
-          activePrinciple: 'Bloqueio tarde',
+          commercialName: 'LOSARTANA TARDE',
+          activePrinciple: 'Losartana vespertina',
           presentation: 'Comprimido',
           administrationRoute: 'VO',
-          usageInstructions: 'Horario fixo de teste.',
+          usageInstructions: 'Interacao persistente canônica.',
         },
         protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I),
+        interactionRulesSnapshot: [
+          buildInteractionRule({
+            interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+            targetGroupCode: GroupCode.GROUP_II_SUCRA,
+            resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+            priority: 200,
+          }),
+        ],
         phases: [
           buildPhase({
             frequency: 1,
@@ -318,12 +351,18 @@ describe('SchedulingService PDF core rules', () => {
         afternoonBlock,
       ]);
 
-      const inactiveMorning = findEntryByTime(result, 'SUCRAFILM', '08:00');
+      const inactiveMorning = findEntryByTime(result, 'SUCRAFILM', '15:00');
       expectInactiveEntry(inactiveMorning, {
         administrationLabel: '10 ML',
       });
-      expect(inactiveMorning?.note).toContain('horário principal e no alternativo');
-      expect(findEntryByTime(result, 'SUCRAFILM', '15:00')).toBeUndefined();
+      expect(inactiveMorning?.timeContext.originalTimeFormatted).toBe('08:00');
+      expect(inactiveMorning?.timeContext.resolvedTimeFormatted).toBe('15:00');
+      expect(inactiveMorning?.conflict).toMatchObject({
+        interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+        resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+        triggerMedicationName: 'LOSARTANA TARDE',
+      });
+      expect(findEntryByTime(result, 'SUCRAFILM', '08:00')).toBeUndefined();
       expect(findEntriesByMedication(result, 'SUCRAFILM')).toHaveLength(2);
     });
 

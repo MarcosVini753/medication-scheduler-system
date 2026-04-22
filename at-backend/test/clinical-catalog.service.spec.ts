@@ -11,14 +11,14 @@ describe('ClinicalCatalogService', () => {
     const medicationRepository = {
       create: jest.fn((entity) => entity),
       save: jest.fn(async (entity) => entity),
-      find: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn(),
     };
 
     const groupRepository = {
       create: jest.fn((entity) => entity),
       save: jest.fn(async (entity) => entity),
-      find: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
     };
 
     return {
@@ -134,18 +134,29 @@ describe('ClinicalCatalogService', () => {
   });
 
   it('seeds the default clinical groups without depending on the legacy module', async () => {
-    const { service, groupRepository } = createService();
+    const { service, groupRepository, medicationRepository } = createService();
+    const allGroups = [
+      GroupCode.GROUP_I,
+      GroupCode.GROUP_II,
+      GroupCode.GROUP_II_BIFOS,
+      GroupCode.GROUP_II_SUCRA,
+      GroupCode.GROUP_III,
+      GroupCode.GROUP_III_MET,
+      GroupCode.GROUP_III_SAL,
+      GroupCode.GROUP_III_CALC,
+      GroupCode.GROUP_I_SED,
+      GroupCode.GROUP_DELTA,
+    ].map((code) => ({ id: `${code}-id`, code }));
+
     groupRepository.find
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        { code: GroupCode.GROUP_I },
-        { code: GroupCode.GROUP_II },
-        { code: GroupCode.GROUP_II_BIFOS },
-      ]);
+      .mockResolvedValueOnce(allGroups);
+    medicationRepository.find.mockResolvedValue([]);
 
     await service.seedCatalog();
 
     expect(groupRepository.save).toHaveBeenCalled();
+    expect(medicationRepository.save).toHaveBeenCalled();
     const savedGroups = groupRepository.save.mock.calls[0][0];
     expect(Array.isArray(savedGroups)).toBe(true);
     expect(savedGroups.length).toBeGreaterThan(0);
@@ -154,6 +165,33 @@ describe('ClinicalCatalogService', () => {
         expect.objectContaining({ code: GroupCode.GROUP_I }),
         expect.objectContaining({ code: GroupCode.GROUP_III_SAL }),
         expect.objectContaining({ code: GroupCode.GROUP_DELTA }),
+      ]),
+    );
+
+    const savedMedicationCalls = medicationRepository.save.mock.calls;
+    const flattenedSavedMedications = savedMedicationCalls.flatMap((call) =>
+      Array.isArray(call[0]) ? call[0] : [call[0]],
+    );
+
+    expect(flattenedSavedMedications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          commercialName: 'LOSARTANA',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'GROUP_I_STANDARD',
+              frequencies: expect.arrayContaining([
+                expect.objectContaining({ frequency: 1 }),
+              ]),
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'METRONIDAZOL',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_METRONIDAZOL_VAGINAL' }),
+          ]),
+        }),
       ]),
     );
   });

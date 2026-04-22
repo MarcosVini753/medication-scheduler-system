@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { NotFoundException } from '@nestjs/common';
+import { UnprocessableEntityException } from '@nestjs/common';
 import { ClinicalAnchor } from '../src/common/enums/clinical-anchor.enum';
 import { ClinicalInteractionType } from '../src/common/enums/clinical-interaction-type.enum';
 import { ClinicalResolutionType } from '../src/common/enums/clinical-resolution-type.enum';
@@ -90,6 +90,43 @@ describe('PatientPrescriptionService', () => {
       clinicalCatalogService:
         (service as unknown as { clinicalCatalogService: { findMedicationById: jest.Mock } })
           .clinicalCatalogService,
+    };
+  }
+
+  function buildClinicalMedicationWithProtocol(protocolOverrides: Record<string, unknown> = {}) {
+    return {
+      id: 'clinical-1',
+      commercialName: 'LOSARTANA',
+      activePrinciple: 'Losartana',
+      presentation: 'Comprimido',
+      administrationRoute: 'VO',
+      usageInstructions: 'Conforme prescricao.',
+      protocols: [
+        {
+          id: 'protocol-1',
+          code: 'GROUP_I_STANDARD',
+          name: 'Grupo I',
+          description: 'Protocolo base',
+          priority: 0,
+          isDefault: true,
+          group: { code: GroupCode.GROUP_I },
+          frequencies: [
+            {
+              frequency: 1,
+              steps: [
+                {
+                  doseLabel: 'D1',
+                  anchor: ClinicalAnchor.CAFE,
+                  offsetMinutes: 0,
+                  semanticTag: ClinicalSemanticTag.STANDARD,
+                },
+              ],
+            },
+          ],
+          interactionRules: [],
+          ...protocolOverrides,
+        },
+      ],
     };
   }
 
@@ -383,39 +420,9 @@ describe('PatientPrescriptionService', () => {
   it('rejects a phase whose frequency is not supported by the chosen protocol', async () => {
     const { service, clinicalCatalogService } = createService();
 
-    clinicalCatalogService.findMedicationById.mockResolvedValue({
-      id: 'clinical-1',
-      commercialName: 'LOSARTANA',
-      activePrinciple: 'Losartana',
-      presentation: 'Comprimido',
-      administrationRoute: 'VO',
-      usageInstructions: 'Conforme prescricao.',
-      protocols: [
-        {
-          id: 'protocol-1',
-          code: 'GROUP_I_STANDARD',
-          name: 'Grupo I',
-          description: 'Protocolo base',
-          priority: 0,
-          isDefault: true,
-          group: { code: GroupCode.GROUP_I },
-          frequencies: [
-            {
-              frequency: 1,
-              steps: [
-                {
-                  doseLabel: 'D1',
-                  anchor: ClinicalAnchor.CAFE,
-                  offsetMinutes: 0,
-                  semanticTag: ClinicalSemanticTag.STANDARD,
-                },
-              ],
-            },
-          ],
-          interactionRules: [],
-        },
-      ],
-    });
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol(),
+    );
 
     await expect(
       service.create({
@@ -442,6 +449,300 @@ describe('PatientPrescriptionService', () => {
           },
         ],
       }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects a recurrence type that is not allowed by the protocol frequency', async () => {
+    const { service, clinicalCatalogService } = createService();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol({
+        frequencies: [
+          {
+            frequency: 1,
+            allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.CAFE,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              {
+                phaseOrder: 1,
+                frequency: 1,
+                sameDosePerSchedule: true,
+                doseAmount: '1 COMP',
+                doseValue: '1',
+                doseUnit: DoseUnit.COMP,
+                recurrenceType: TreatmentRecurrence.WEEKLY,
+                weeklyDay: 'MONDAY',
+                treatmentDays: 10,
+                continuousUse: false,
+                manualAdjustmentEnabled: false,
+              } as never,
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects PRN when the protocol frequency does not allow it', async () => {
+    const { service, clinicalCatalogService } = createService();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol({
+        frequencies: [
+          {
+            frequency: 1,
+            allowedRecurrenceTypes: [TreatmentRecurrence.DAILY, TreatmentRecurrence.PRN],
+            allowsPrn: false,
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.CAFE,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              {
+                phaseOrder: 1,
+                frequency: 1,
+                sameDosePerSchedule: true,
+                doseAmount: '1 COMP',
+                doseValue: '1',
+                doseUnit: DoseUnit.COMP,
+                recurrenceType: TreatmentRecurrence.PRN,
+                prnReason: 'PAIN' as never,
+                treatmentDays: 10,
+                continuousUse: false,
+                manualAdjustmentEnabled: false,
+              } as never,
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects variable dose by schedule when the protocol frequency does not allow it', async () => {
+    const { service, clinicalCatalogService } = createService();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol({
+        frequencies: [
+          {
+            frequency: 2,
+            allowsVariableDoseBySchedule: false,
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.CAFE,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+              {
+                doseLabel: 'D2',
+                anchor: ClinicalAnchor.JANTAR,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              {
+                phaseOrder: 1,
+                frequency: 2,
+                sameDosePerSchedule: false,
+                perDoseOverrides: [
+                  { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+                  { doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+                ],
+                recurrenceType: TreatmentRecurrence.DAILY,
+                treatmentDays: 10,
+                continuousUse: false,
+                manualAdjustmentEnabled: false,
+              } as never,
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('accepts recurrence, PRN and variable dose combinations when the protocol frequency allows them', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol({
+        frequencies: [
+          {
+            frequency: 2,
+            allowedRecurrenceTypes: [TreatmentRecurrence.PRN],
+            allowsPrn: true,
+            allowsVariableDoseBySchedule: true,
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.CAFE,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+              {
+                doseLabel: 'D2',
+                anchor: ClinicalAnchor.JANTAR,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    prescriptionRepository.findOne.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      patient: { id: 'patient-1' },
+      medications: [
+        {
+          id: 'prescription-medication-1',
+          sourceClinicalMedicationId: 'clinical-1',
+          sourceProtocolId: 'protocol-1',
+          medicationSnapshot: {
+            id: 'clinical-1',
+            commercialName: 'LOSARTANA',
+            activePrinciple: 'Losartana',
+            presentation: 'Comprimido',
+            administrationRoute: 'VO',
+            usageInstructions: 'Conforme prescricao.',
+          },
+          protocolSnapshot: {
+            id: 'protocol-1',
+            code: 'GROUP_I_STANDARD',
+            name: 'Grupo I',
+            description: 'Protocolo base',
+            groupCode: GroupCode.GROUP_I,
+            priority: 0,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 2,
+                allowedRecurrenceTypes: [TreatmentRecurrence.PRN],
+                allowsPrn: true,
+                allowsVariableDoseBySchedule: true,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                    semanticTag: ClinicalSemanticTag.STANDARD,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                    semanticTag: ClinicalSemanticTag.STANDARD,
+                  },
+                ],
+              },
+            ],
+          },
+          interactionRulesSnapshot: [],
+          phases: [
+            {
+              id: 'phase-1',
+              phaseOrder: 1,
+              frequency: 2,
+              sameDosePerSchedule: false,
+              perDoseOverrides: [
+                { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+                { doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+              ],
+              recurrenceType: TreatmentRecurrence.PRN,
+              prnReason: 'PAIN',
+              treatmentDays: 10,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            },
+          ],
+        },
+      ],
+    }));
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              {
+                phaseOrder: 1,
+                frequency: 2,
+                sameDosePerSchedule: false,
+                perDoseOverrides: [
+                  { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+                  { doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+                ],
+                recurrenceType: TreatmentRecurrence.PRN,
+                prnReason: 'PAIN' as never,
+                treatmentDays: 10,
+                continuousUse: false,
+                manualAdjustmentEnabled: false,
+              } as never,
+            ],
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      patientId: 'patient-1',
+      prescriptionId: 'rx-1',
+    });
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
   });
 });

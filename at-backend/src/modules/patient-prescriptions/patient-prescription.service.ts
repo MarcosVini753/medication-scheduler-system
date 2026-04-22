@@ -1,9 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { ClinicalCatalogService } from '../clinical-catalog/clinical-catalog.service';
 import { PatientService } from '../patients/patient.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
+import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
 import { CreatePatientPrescriptionDto } from './dto/create-patient-prescription.dto';
 import {
   ClinicalInteractionRuleSnapshot,
@@ -50,7 +55,10 @@ export class PatientPrescriptionService {
           }
 
           this.ensureSequentialPhaseOrders(medicationDto.phases);
-          this.ensureProtocolSupportsPhases(protocolSnapshotFromEntity(protocol), medicationDto.phases);
+          this.ensureProtocolSupportsPhases(
+            protocolSnapshotFromEntity(protocol),
+            medicationDto.phases,
+          );
 
           const medication = prescriptionMedicationRepository.create({
             sourceClinicalMedicationId: clinicalMedication.id,
@@ -118,15 +126,50 @@ export class PatientPrescriptionService {
     phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
   ): void {
     phases.forEach((phase) => {
-      const supported = protocolSnapshot.frequencies.some(
+      const supportedFrequency = protocolSnapshot.frequencies.find(
         (item) => item.frequency === phase.frequency,
       );
-      if (!supported) {
-        throw new NotFoundException(
+      if (!supportedFrequency) {
+        throw new UnprocessableEntityException(
           `Protocolo ${protocolSnapshot.code} não suporta frequência ${phase.frequency}.`,
         );
       }
+
+      this.ensurePhaseMatchesFrequencyRules(protocolSnapshot, supportedFrequency, phase);
     });
+  }
+
+  private ensurePhaseMatchesFrequencyRules(
+    protocolSnapshot: ClinicalProtocolSnapshot,
+    frequencySnapshot: ClinicalProtocolSnapshot['frequencies'][number],
+    phase: CreatePatientPrescriptionDto['medications'][number]['phases'][number],
+  ): void {
+    if (
+      frequencySnapshot.allowedRecurrenceTypes?.length &&
+      !frequencySnapshot.allowedRecurrenceTypes.includes(phase.recurrenceType)
+    ) {
+      throw new UnprocessableEntityException(
+        `Protocolo ${protocolSnapshot.code} na frequência ${phase.frequency} não permite recorrência ${phase.recurrenceType}.`,
+      );
+    }
+
+    if (
+      phase.recurrenceType === TreatmentRecurrence.PRN &&
+      frequencySnapshot.allowsPrn === false
+    ) {
+      throw new UnprocessableEntityException(
+        `Protocolo ${protocolSnapshot.code} na frequência ${phase.frequency} não permite prescrição sob demanda (PRN).`,
+      );
+    }
+
+    if (
+      phase.sameDosePerSchedule === false &&
+      frequencySnapshot.allowsVariableDoseBySchedule === false
+    ) {
+      throw new UnprocessableEntityException(
+        `Protocolo ${protocolSnapshot.code} na frequência ${phase.frequency} não permite dose variável por horário.`,
+      );
+    }
   }
 
   private ensureSequentialPhaseOrders(
@@ -136,7 +179,7 @@ export class PatientPrescriptionService {
     const expectedOrders = Array.from({ length: sortedOrders.length }, (_, index) => index + 1);
     const isSequential = sortedOrders.every((order, index) => order === expectedOrders[index]);
     if (!isSequential) {
-      throw new NotFoundException(
+      throw new UnprocessableEntityException(
         'As fases terapêuticas devem usar phaseOrder sequencial, sem lacunas nem repetição.',
       );
     }
