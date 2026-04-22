@@ -5,11 +5,24 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { DoseUnit } from '../../common/enums/dose-unit.enum';
+import { MonthlySpecialReference } from '../../common/enums/monthly-special-reference.enum';
+import { OcularLaterality } from '../../common/enums/ocular-laterality.enum';
+import { OticLaterality } from '../../common/enums/otic-laterality.enum';
+import { PrnReason } from '../../common/enums/prn-reason.enum';
 import { ClinicalCatalogService } from '../clinical-catalog/clinical-catalog.service';
 import { PatientService } from '../patients/patient.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
 import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
 import { CreatePatientPrescriptionDto } from './dto/create-patient-prescription.dto';
+import {
+  AddPatientPrescriptionMedicationDto,
+  AppendPrescriptionMedicationPhasesDto,
+  UpdatePatientPrescriptionDto,
+  UpdatePatientPrescriptionMedicationOperationDto,
+  UpdatePatientPrescriptionPhaseDto,
+  UpsertPatientPrescriptionPhaseDto,
+} from './dto/update-patient-prescription.dto';
 import {
   ClinicalInteractionRuleSnapshot,
   ClinicalMedicationSnapshot,
@@ -18,9 +31,52 @@ import {
 import { PatientPrescriptionMedication } from './entities/patient-prescription-medication.entity';
 import { PatientPrescriptionPhase } from './entities/patient-prescription-phase.entity';
 import { PatientPrescription } from './entities/patient-prescription.entity';
+import { getPhaseValidationError } from './validators/patient-prescription-phase.validator';
 
-type PrescriptionMedicationPhaseDto =
-  CreatePatientPrescriptionDto['medications'][number]['phases'][number];
+type PrescriptionMedicationPhaseDto = {
+  phaseOrder: number;
+  frequency: number;
+  sameDosePerSchedule: boolean;
+  recurrenceType: TreatmentRecurrence;
+  treatmentDays?: number;
+  continuousUse: boolean;
+  weeklyDay?: string;
+  monthlyRule?: string;
+  monthlyDay?: number;
+  monthlySpecialReference?: MonthlySpecialReference;
+  monthlySpecialBaseDate?: string;
+  monthlySpecialOffsetDays?: number;
+  alternateDaysInterval?: number;
+  prnReason?: PrnReason;
+  ocularLaterality?: OcularLaterality;
+  oticLaterality?: OticLaterality;
+  glycemiaScaleRanges?: Array<{
+    minimum: number;
+    maximum: number;
+    doseValue: string;
+    doseUnit: DoseUnit;
+  }>;
+  manualAdjustmentEnabled: boolean;
+  manualTimes?: string[];
+  doseAmount?: string;
+  doseValue?: string;
+  doseUnit?: DoseUnit;
+  perDoseOverrides?: Array<{
+    doseLabel: string;
+    doseValue: string;
+    doseUnit: DoseUnit;
+  }>;
+};
+
+type MedicationDomainCapabilities = {
+  id: string;
+  isOphthalmic?: boolean;
+  isOtic?: boolean;
+  requiresGlycemiaScale?: boolean;
+  isContraceptiveMonthly?: boolean;
+  supportsManualAdjustment?: boolean;
+};
+
 type ClinicalMedicationCatalogEntry = Awaited<
   ReturnType<ClinicalCatalogService['findMedicationById']>
 >;
@@ -61,7 +117,11 @@ export class PatientPrescriptionService {
           }
 
           this.ensureSequentialPhaseOrders(medicationDto.phases);
-          this.ensureMedicationSupportsPhaseDomainRules(clinicalMedication, medicationDto.phases);
+          this.ensurePhaseStructureIsValid(medicationDto.phases);
+          this.ensureMedicationSupportsPhaseDomainRules(
+            this.toMedicationDomainCapabilitiesFromCatalog(clinicalMedication),
+            medicationDto.phases,
+          );
           this.ensureProtocolSupportsPhases(
             protocolSnapshotFromEntity(protocol),
             medicationDto.phases,
@@ -111,6 +171,206 @@ export class PatientPrescriptionService {
     });
   }
 
+  async appendPhases(
+    prescriptionId: string,
+    prescriptionMedicationId: string,
+    dto: AppendPrescriptionMedicationPhasesDto,
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const prescriptionRepository = manager.getRepository(PatientPrescription);
+      const medicationRepository = manager.getRepository(PatientPrescriptionMedication);
+      const phaseRepository = manager.getRepository(PatientPrescriptionPhase);
+
+      const prescription = await this.loadPrescriptionForMutation(
+        prescriptionId,
+        prescriptionRepository,
+      );
+      const medication = prescription.medications.find(
+        (item) => item.id === prescriptionMedicationId,
+      );
+      if (!medication) {
+        throw new UnprocessableEntityException(
+          `Prescrição ${prescriptionId}: prescriptionMedicationId ${prescriptionMedicationId} não encontrado.`,
+        );
+      }
+
+      const lastOrder = medication.phases.reduce(
+        (highest, phase) => Math.max(highest, phase.phaseOrder),
+        0,
+      );
+      const appendedPhases = dto.phases.map((phaseDto, index) =>
+        phaseRepository.create({
+          ...phaseDto,
+          phaseOrder: lastOrder + index + 1,
+          doseAmount: this.resolvePhaseDoseAmount(phaseDto),
+        }),
+      );
+
+      const nextPhases = [...medication.phases, ...appendedPhases];
+      this.ensurePhaseSetIsValidForMedication(medication, nextPhases);
+
+      medication.phases = nextPhases;
+      await medicationRepository.save(medication);
+
+      const loaded = await this.reloadPrescriptionForScheduling(
+        prescription.id,
+        prescriptionRepository,
+      );
+
+      return this.schedulingService.buildAndPersistSchedule(loaded, manager);
+    });
+  }
+
+  async updatePrescription(prescriptionId: string, dto: UpdatePatientPrescriptionDto) {
+    return this.dataSource.transaction(async (manager) => {
+      const prescriptionRepository = manager.getRepository(PatientPrescription);
+      const medicationRepository = manager.getRepository(PatientPrescriptionMedication);
+      const phaseRepository = manager.getRepository(PatientPrescriptionPhase);
+
+      const prescription = await this.loadPrescriptionForMutation(
+        prescriptionId,
+        prescriptionRepository,
+      );
+      this.ensureUpdatePayloadHasOperation(dto);
+
+      const medicationById = new Map(
+        prescription.medications.map((medication) => [medication.id, medication]),
+      );
+      const removeMedicationIds = new Set(dto.removeMedicationIds ?? []);
+
+      this.ensureUniqueIds(
+        dto.removeMedicationIds ?? [],
+        `Prescrição ${prescriptionId}: removeMedicationIds contém valores duplicados.`,
+      );
+      this.ensureUniqueIds(
+        (dto.updateMedications ?? []).map((item) => item.prescriptionMedicationId),
+        `Prescrição ${prescriptionId}: updateMedications contém prescriptionMedicationId duplicado.`,
+      );
+
+      for (const removeMedicationId of removeMedicationIds) {
+        if (!medicationById.has(removeMedicationId)) {
+          throw new UnprocessableEntityException(
+            `Prescrição ${prescriptionId}: prescriptionMedicationId ${removeMedicationId} não encontrado para remoção.`,
+          );
+        }
+      }
+
+      for (const medicationOperation of dto.updateMedications ?? []) {
+        if (removeMedicationIds.has(medicationOperation.prescriptionMedicationId)) {
+          throw new UnprocessableEntityException(
+            `Prescrição ${prescriptionId}: prescriptionMedicationId ${medicationOperation.prescriptionMedicationId} não pode ser atualizado e removido na mesma operação.`,
+          );
+        }
+        this.ensureMedicationUpdateOperationIsConsistent(medicationOperation, prescriptionId);
+      }
+
+      const medicationsToRemove = prescription.medications.filter((medication) =>
+        removeMedicationIds.has(medication.id),
+      );
+      if (medicationsToRemove.length) {
+        await medicationRepository.remove(medicationsToRemove);
+      }
+
+      prescription.medications = prescription.medications.filter(
+        (medication) => !removeMedicationIds.has(medication.id),
+      );
+      for (const medication of medicationsToRemove) {
+        medicationById.delete(medication.id);
+      }
+
+      for (const medicationOperation of dto.updateMedications ?? []) {
+        const medication = medicationById.get(medicationOperation.prescriptionMedicationId);
+        if (!medication) {
+          throw new UnprocessableEntityException(
+            `Prescrição ${prescriptionId}: prescriptionMedicationId ${medicationOperation.prescriptionMedicationId} não encontrado.`,
+          );
+        }
+
+        if (medicationOperation.replacePhases?.length) {
+          if (medication.phases.length) {
+            await phaseRepository.delete(medication.phases.map((phase) => phase.id));
+          }
+
+          const replacementPhases = this.buildPhaseEntitiesFromUpsert(
+            medicationOperation.replacePhases,
+            phaseRepository,
+          );
+          this.assignSequentialPhaseOrders(replacementPhases);
+          this.applyDefaultDoseAmount(replacementPhases);
+          this.ensurePhaseSetIsValidForMedication(medication, replacementPhases);
+          medication.phases = replacementPhases;
+          continue;
+        }
+
+        this.ensureUniqueIds(
+          medicationOperation.removePhaseIds ?? [],
+          `Prescrição ${prescriptionId}: removePhaseIds contém valores duplicados no medicamento ${medication.id}.`,
+        );
+        this.ensureUniqueIds(
+          (medicationOperation.updatePhases ?? []).map((phase) => phase.phaseId),
+          `Prescrição ${prescriptionId}: updatePhases contém phaseId duplicado no medicamento ${medication.id}.`,
+        );
+
+        let phases = [...medication.phases];
+        const removePhaseIds = new Set(medicationOperation.removePhaseIds ?? []);
+        for (const removePhaseId of removePhaseIds) {
+          if (!phases.some((phase) => phase.id === removePhaseId)) {
+            throw new UnprocessableEntityException(
+              `Prescrição ${prescriptionId}: phaseId ${removePhaseId} não encontrado no medicamento ${medication.id}.`,
+            );
+          }
+        }
+
+        if (removePhaseIds.size) {
+          await phaseRepository.delete([...removePhaseIds]);
+          phases = phases.filter((phase) => !removePhaseIds.has(phase.id));
+        }
+
+        for (const phaseUpdate of medicationOperation.updatePhases ?? []) {
+          const phase = phases.find((item) => item.id === phaseUpdate.phaseId);
+          if (!phase) {
+            throw new UnprocessableEntityException(
+              `Prescrição ${prescriptionId}: phaseId ${phaseUpdate.phaseId} não encontrado no medicamento ${medication.id}.`,
+            );
+          }
+          this.applyPhasePatch(phase, phaseUpdate);
+        }
+
+        if (!phases.length) {
+          throw new UnprocessableEntityException(
+            `Prescrição ${prescriptionId}: o medicamento ${medication.id} deve manter ao menos uma fase terapêutica.`,
+          );
+        }
+
+        this.assignSequentialPhaseOrders(phases);
+        this.applyDefaultDoseAmount(phases);
+        this.ensurePhaseSetIsValidForMedication(medication, phases);
+        medication.phases = phases;
+      }
+
+      if (dto.addMedications?.length) {
+        for (const addMedicationDto of dto.addMedications) {
+          const newMedication = await this.buildMedicationFromAddDto(
+            addMedicationDto,
+            medicationRepository,
+            phaseRepository,
+          );
+          prescription.medications.push(newMedication);
+        }
+      }
+
+      this.ensureNoDuplicateMedicationProtocolPairs(prescription.medications, prescriptionId);
+
+      await prescriptionRepository.save(prescription);
+      const loaded = await this.reloadPrescriptionForScheduling(
+        prescription.id,
+        prescriptionRepository,
+      );
+
+      return this.schedulingService.buildAndPersistSchedule(loaded, manager);
+    });
+  }
+
   async list(): Promise<PatientPrescription[]> {
     return this.prescriptionRepository.find({
       relations: ['patient', 'medications', 'medications.phases'],
@@ -128,9 +388,235 @@ export class PatientPrescriptionService {
     return prescription;
   }
 
+  private async loadPrescriptionForMutation(
+    prescriptionId: string,
+    prescriptionRepository: Repository<PatientPrescription>,
+  ): Promise<PatientPrescription> {
+    const prescription = await prescriptionRepository.findOne({
+      where: { id: prescriptionId },
+      relations: ['patient', 'medications', 'medications.phases'],
+    });
+    if (!prescription) {
+      throw new NotFoundException('Prescrição do paciente não encontrada.');
+    }
+    return prescription;
+  }
+
+  private async reloadPrescriptionForScheduling(
+    prescriptionId: string,
+    prescriptionRepository: Repository<PatientPrescription>,
+  ): Promise<PatientPrescription> {
+    const loaded = await prescriptionRepository.findOne({
+      where: { id: prescriptionId },
+      relations: ['patient', 'medications', 'medications.phases'],
+    });
+    if (!loaded) {
+      throw new NotFoundException('Prescrição do paciente não encontrada.');
+    }
+    return loaded;
+  }
+
+  private ensureUpdatePayloadHasOperation(dto: UpdatePatientPrescriptionDto): void {
+    if (!dto.addMedications?.length && !dto.updateMedications?.length && !dto.removeMedicationIds?.length) {
+      throw new UnprocessableEntityException(
+        'Informe ao menos uma operação: addMedications, updateMedications ou removeMedicationIds.',
+      );
+    }
+  }
+
+  private ensureMedicationUpdateOperationIsConsistent(
+    medicationOperation: UpdatePatientPrescriptionMedicationOperationDto,
+    prescriptionId: string,
+  ): void {
+    if (
+      !medicationOperation.replacePhases?.length &&
+      !medicationOperation.updatePhases?.length &&
+      !medicationOperation.removePhaseIds?.length
+    ) {
+      throw new UnprocessableEntityException(
+        `Prescrição ${prescriptionId}: o medicamento ${medicationOperation.prescriptionMedicationId} deve informar replacePhases, updatePhases ou removePhaseIds.`,
+      );
+    }
+
+    if (
+      medicationOperation.replacePhases?.length &&
+      (medicationOperation.updatePhases?.length || medicationOperation.removePhaseIds?.length)
+    ) {
+      throw new UnprocessableEntityException(
+        `Prescrição ${prescriptionId}: o medicamento ${medicationOperation.prescriptionMedicationId} não pode combinar replacePhases com updatePhases/removePhaseIds.`,
+      );
+    }
+  }
+
+  private ensureUniqueIds(ids: string[], duplicatedMessage: string): void {
+    if (new Set(ids).size !== ids.length) {
+      throw new UnprocessableEntityException(duplicatedMessage);
+    }
+  }
+
+  private buildPhaseEntitiesFromUpsert(
+    phases: UpsertPatientPrescriptionPhaseDto[],
+    phaseRepository: Repository<PatientPrescriptionPhase>,
+  ): PatientPrescriptionPhase[] {
+    return phases.map((phase) =>
+      phaseRepository.create({
+        ...phase,
+        phaseOrder: 1,
+        doseAmount: this.resolvePhaseDoseAmount(phase),
+      }),
+    );
+  }
+
+  private applyDefaultDoseAmount(phases: PrescriptionMedicationPhaseDto[]): void {
+    phases.forEach((phase) => {
+      phase.doseAmount = this.resolvePhaseDoseAmount(phase);
+    });
+  }
+
+  private resolvePhaseDoseAmount(
+    phase:
+      | Pick<PrescriptionMedicationPhaseDto, 'doseAmount' | 'doseValue'>
+      | UpsertPatientPrescriptionPhaseDto,
+  ): string {
+    return phase.doseAmount ?? phase.doseValue ?? '1 unidade';
+  }
+
+  private applyPhasePatch(
+    phase: PatientPrescriptionPhase,
+    phaseUpdate: UpdatePatientPrescriptionPhaseDto,
+  ): void {
+    const patchEntries = Object.entries(phaseUpdate).filter(
+      ([key, value]) => key !== 'phaseId' && value !== undefined,
+    );
+
+    patchEntries.forEach(([key, value]) => {
+      (phase as unknown as Record<string, unknown>)[key] = value;
+    });
+  }
+
+  private ensurePhaseStructureIsValid(phases: PrescriptionMedicationPhaseDto[]): void {
+    phases.forEach((phase) => {
+      const phaseValidationError = getPhaseValidationError(phase);
+      if (phaseValidationError) {
+        throw new UnprocessableEntityException(
+          `Fase ${phase.phaseOrder}: ${phaseValidationError}`,
+        );
+      }
+    });
+  }
+
+  private assignSequentialPhaseOrders(phases: PrescriptionMedicationPhaseDto[]): void {
+    [...phases]
+      .sort((left, right) => left.phaseOrder - right.phaseOrder)
+      .forEach((phase, index) => {
+        phase.phaseOrder = index + 1;
+      });
+  }
+
+  private ensurePhaseSetIsValidForMedication(
+    medication: Pick<
+      PatientPrescriptionMedication,
+      'sourceClinicalMedicationId' | 'medicationSnapshot' | 'protocolSnapshot'
+    >,
+    phases: PrescriptionMedicationPhaseDto[],
+  ): void {
+    this.ensureSequentialPhaseOrders(phases);
+    this.ensurePhaseStructureIsValid(phases);
+    this.ensureMedicationSupportsPhaseDomainRules(
+      this.toMedicationDomainCapabilitiesFromSnapshot(
+        medication.sourceClinicalMedicationId,
+        medication.medicationSnapshot,
+      ),
+      phases,
+    );
+    this.ensureProtocolSupportsPhases(medication.protocolSnapshot, phases);
+  }
+
+  private toMedicationDomainCapabilitiesFromCatalog(
+    medication: ClinicalMedicationCatalogEntry,
+  ): MedicationDomainCapabilities {
+    return {
+      id: medication.id,
+      isOphthalmic: medication.isOphthalmic,
+      isOtic: medication.isOtic,
+      requiresGlycemiaScale: medication.requiresGlycemiaScale,
+      isContraceptiveMonthly: medication.isContraceptiveMonthly,
+      supportsManualAdjustment: medication.supportsManualAdjustment,
+    };
+  }
+
+  private toMedicationDomainCapabilitiesFromSnapshot(
+    sourceClinicalMedicationId: string,
+    snapshot: ClinicalMedicationSnapshot,
+  ): MedicationDomainCapabilities {
+    return {
+      id: sourceClinicalMedicationId,
+      isOphthalmic: snapshot.isOphthalmic,
+      isOtic: snapshot.isOtic,
+      requiresGlycemiaScale: snapshot.requiresGlycemiaScale,
+      isContraceptiveMonthly: snapshot.isContraceptiveMonthly,
+      supportsManualAdjustment: snapshot.supportsManualAdjustment,
+    };
+  }
+
+  private async buildMedicationFromAddDto(
+    medicationDto: AddPatientPrescriptionMedicationDto,
+    medicationRepository: Repository<PatientPrescriptionMedication>,
+    phaseRepository: Repository<PatientPrescriptionPhase>,
+  ): Promise<PatientPrescriptionMedication> {
+    const clinicalMedication = await this.clinicalCatalogService.findMedicationById(
+      medicationDto.clinicalMedicationId,
+    );
+    const protocol = clinicalMedication.protocols.find(
+      (item) => item.id === medicationDto.protocolId,
+    );
+    if (!protocol) {
+      throw new NotFoundException(
+        'Protocolo clínico não encontrado para o medicamento informado.',
+      );
+    }
+
+    const phases = this.buildPhaseEntitiesFromUpsert(medicationDto.phases, phaseRepository);
+    this.assignSequentialPhaseOrders(phases);
+    this.applyDefaultDoseAmount(phases);
+    this.ensurePhaseStructureIsValid(phases);
+    this.ensureMedicationSupportsPhaseDomainRules(
+      this.toMedicationDomainCapabilitiesFromCatalog(clinicalMedication),
+      phases,
+    );
+    this.ensureProtocolSupportsPhases(protocolSnapshotFromEntity(protocol), phases);
+
+    return medicationRepository.create({
+      sourceClinicalMedicationId: clinicalMedication.id,
+      sourceProtocolId: protocol.id,
+      medicationSnapshot: medicationSnapshotFromEntity(clinicalMedication),
+      protocolSnapshot: protocolSnapshotFromEntity(protocol),
+      interactionRulesSnapshot: interactionRulesSnapshotFromEntity(protocol),
+      phases,
+    });
+  }
+
+  private ensureNoDuplicateMedicationProtocolPairs(
+    medications: Array<
+      Pick<PatientPrescriptionMedication, 'sourceClinicalMedicationId' | 'sourceProtocolId'>
+    >,
+    prescriptionId: string,
+  ): void {
+    const seenPairs = new Set<string>();
+    for (const medication of medications) {
+      const pairKey = `${medication.sourceClinicalMedicationId}:${medication.sourceProtocolId}`;
+      if (seenPairs.has(pairKey)) {
+        throw new UnprocessableEntityException(
+          `Prescrição ${prescriptionId}: combinação clinicalMedicationId + protocolId duplicada (${pairKey}).`,
+        );
+      }
+      seenPairs.add(pairKey);
+    }
+  }
+
   private ensureProtocolSupportsPhases(
     protocolSnapshot: ClinicalProtocolSnapshot,
-    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+    phases: PrescriptionMedicationPhaseDto[],
   ): void {
     phases.forEach((phase) => {
       const supportedFrequency = protocolSnapshot.frequencies.find(
@@ -149,7 +635,7 @@ export class PatientPrescriptionService {
   private ensurePhaseMatchesFrequencyRules(
     protocolSnapshot: ClinicalProtocolSnapshot,
     frequencySnapshot: ClinicalProtocolSnapshot['frequencies'][number],
-    phase: CreatePatientPrescriptionDto['medications'][number]['phases'][number],
+    phase: PrescriptionMedicationPhaseDto,
   ): void {
     if (
       frequencySnapshot.allowedRecurrenceTypes?.length &&
@@ -180,7 +666,7 @@ export class PatientPrescriptionService {
   }
 
   private ensureSequentialPhaseOrders(
-    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+    phases: Array<Pick<PrescriptionMedicationPhaseDto, 'phaseOrder'>>,
   ): void {
     const sortedOrders = [...phases].map((phase) => phase.phaseOrder).sort((a, b) => a - b);
     const expectedOrders = Array.from({ length: sortedOrders.length }, (_, index) => index + 1);
@@ -193,8 +679,8 @@ export class PatientPrescriptionService {
   }
 
   private ensureMedicationSupportsPhaseDomainRules(
-    medication: ClinicalMedicationCatalogEntry,
-    phases: CreatePatientPrescriptionDto['medications'][number]['phases'],
+    medication: MedicationDomainCapabilities,
+    phases: PrescriptionMedicationPhaseDto[],
   ): void {
     const isOphthalmic = Boolean(medication.isOphthalmic);
     const isOtic = Boolean(medication.isOtic);
@@ -325,9 +811,7 @@ export class PatientPrescriptionService {
   private ensureValidGlycemiaScaleRanges(
     medicationId: string,
     phaseOrder: number,
-    ranges: NonNullable<
-      CreatePatientPrescriptionDto['medications'][number]['phases'][number]['glycemiaScaleRanges']
-    >,
+    ranges: NonNullable<PrescriptionMedicationPhaseDto['glycemiaScaleRanges']>,
   ): void {
     const sortedRanges = [...ranges].sort((a, b) => a.minimum - b.minimum);
 

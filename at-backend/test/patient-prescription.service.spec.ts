@@ -1640,4 +1640,462 @@ describe('PatientPrescriptionService', () => {
       'Fase 1: monthlySpecial* é inválido para medicamento clinical-1 (isContraceptiveMonthly=false).',
     );
   });
+
+  function buildUpsertPhase(overrides: Record<string, unknown> = {}) {
+    return {
+      frequency: 1,
+      sameDosePerSchedule: true,
+      doseAmount: '1 COMP',
+      doseValue: '1',
+      doseUnit: DoseUnit.COMP,
+      recurrenceType: TreatmentRecurrence.DAILY,
+      treatmentDays: 10,
+      continuousUse: false,
+      manualAdjustmentEnabled: false,
+      ...overrides,
+    };
+  }
+
+  function buildPrescriptionState(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'rx-1',
+      patient: { id: 'patient-1' },
+      startedAt: '2026-04-21',
+      status: 'ACTIVE',
+      medications: [
+        {
+          id: 'med-1',
+          sourceClinicalMedicationId: 'clinical-1',
+          sourceProtocolId: 'protocol-1',
+          medicationSnapshot: {
+            id: 'clinical-1',
+            commercialName: 'LOSARTANA',
+            activePrinciple: 'Losartana',
+            presentation: 'Comprimido',
+            administrationRoute: 'VO',
+            usageInstructions: 'Conforme prescricao.',
+            supportsManualAdjustment: true,
+            isOphthalmic: false,
+            isOtic: false,
+            requiresGlycemiaScale: false,
+            isContraceptiveMonthly: false,
+          },
+          protocolSnapshot: {
+            id: 'protocol-1',
+            code: 'GROUP_I_STANDARD',
+            name: 'Grupo I',
+            description: 'Protocolo base',
+            groupCode: GroupCode.GROUP_I,
+            priority: 0,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                    semanticTag: ClinicalSemanticTag.STANDARD,
+                  },
+                ],
+              },
+            ],
+          },
+          interactionRulesSnapshot: [],
+          phases: [
+            {
+              id: 'phase-1',
+              phaseOrder: 1,
+              ...buildUpsertPhase(),
+            },
+          ],
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  function buildClinicalMedicationForUpdate(
+    clinicalMedicationId: string,
+    protocolId: string,
+    groupCode: GroupCode,
+  ) {
+    return {
+      id: clinicalMedicationId,
+      commercialName: `MED-${clinicalMedicationId}`,
+      activePrinciple: `Principio-${clinicalMedicationId}`,
+      presentation: 'Comprimido',
+      administrationRoute: 'VO',
+      usageInstructions: 'Conforme prescricao.',
+      supportsManualAdjustment: true,
+      protocols: [
+        {
+          id: protocolId,
+          code: `PROTOCOLO-${protocolId}`,
+          name: `Protocolo ${protocolId}`,
+          description: 'Protocolo update',
+          priority: 0,
+          isDefault: true,
+          group: { code: groupCode },
+          frequencies: [
+            {
+              frequency: 1,
+              steps: [
+                {
+                  doseLabel: 'D1',
+                  anchor: ClinicalAnchor.CAFE,
+                  offsetMinutes: 0,
+                  semanticTag: ClinicalSemanticTag.STANDARD,
+                },
+              ],
+            },
+          ],
+          interactionRules: [],
+        },
+      ],
+    };
+  }
+
+  function createUpdateServiceHarness(initialState?: Record<string, unknown>) {
+    let nextMedicationId = 10;
+    let nextPhaseId = 50;
+    const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+    const state: { prescription: any } = {
+      prescription: buildPrescriptionState(initialState) as any,
+    };
+
+    const ensureMedicationId = (id?: string) => id ?? `med-new-${nextMedicationId++}`;
+    const ensurePhaseId = (id?: string) => id ?? `phase-new-${nextPhaseId++}`;
+
+    const normalizePrescription = (prescription: Record<string, unknown>) => {
+      const normalized = clone(prescription) as Record<string, unknown> & {
+        medications: Array<Record<string, unknown> & { phases: Array<Record<string, unknown>> }>;
+      };
+      normalized.medications = normalized.medications.map((medication) => ({
+        ...medication,
+        id: ensureMedicationId(medication.id as string | undefined),
+        phases: medication.phases.map((phase) => ({
+          ...phase,
+          id: ensurePhaseId(phase.id as string | undefined),
+        })),
+      }));
+      return normalized;
+    };
+
+    const prescriptionRepository = {
+      find: jest.fn(),
+      create: jest.fn((entity) => entity),
+      save: jest.fn(async (entity) => {
+        state.prescription = normalizePrescription(entity as Record<string, unknown>);
+        return clone(state.prescription);
+      }),
+      findOne: jest.fn(async ({ where }: { where: { id: string } }) => {
+        if (where.id !== (state.prescription.id as string)) return null;
+        return clone(state.prescription);
+      }),
+    };
+
+    const medicationRepository = {
+      create: jest.fn((entity) => ({
+        ...entity,
+        id: ensureMedicationId((entity as { id?: string }).id),
+        phases: (entity as { phases?: Array<Record<string, unknown>> }).phases?.map((phase) => ({
+          ...phase,
+          id: ensurePhaseId(phase.id as string | undefined),
+        })),
+      })),
+      save: jest.fn(async (entity) => {
+        const medication = {
+          ...clone(entity),
+          id: ensureMedicationId((entity as { id?: string }).id),
+          phases: ((entity as { phases?: Array<Record<string, unknown>> }).phases ?? []).map(
+            (phase) => ({
+              ...phase,
+              id: ensurePhaseId(phase.id as string | undefined),
+            }),
+          ),
+        };
+        const medications =
+          (state.prescription.medications as Array<Record<string, unknown>>) ?? [];
+        const index = medications.findIndex((item) => item.id === medication.id);
+        if (index >= 0) {
+          medications[index] = medication;
+        } else {
+          medications.push(medication);
+        }
+        state.prescription.medications = medications;
+        return clone(medication);
+      }),
+      remove: jest.fn(async (entities: Array<{ id: string }>) => {
+        const idsToRemove = new Set(entities.map((item) => item.id));
+        state.prescription.medications = (
+          state.prescription.medications as Array<Record<string, unknown>>
+        ).filter((medication) => !idsToRemove.has(medication.id as string));
+        return entities;
+      }),
+    };
+
+    const phaseRepository = {
+      create: jest.fn((entity) => ({
+        ...entity,
+        id: ensurePhaseId((entity as { id?: string }).id),
+      })),
+      delete: jest.fn(async (criteria: string[] | string) => {
+        const ids = Array.isArray(criteria) ? criteria : [criteria];
+        const removeIds = new Set(ids);
+        state.prescription.medications = (
+          state.prescription.medications as Array<
+            Record<string, unknown> & { phases?: Array<Record<string, unknown>> }
+          >
+        ).map((medication) => ({
+          ...medication,
+          phases: (medication.phases ?? []).filter(
+            (phase) => !removeIds.has(phase.id as string),
+          ),
+        }));
+        return { affected: ids.length };
+      }),
+    };
+
+    const manager = {
+      getRepository: jest.fn((entity) => {
+        const entityName = typeof entity === 'function' ? entity.name : String(entity);
+        if (entityName === 'PatientPrescription') return prescriptionRepository;
+        if (entityName === 'PatientPrescriptionMedication') return medicationRepository;
+        if (entityName === 'PatientPrescriptionPhase') return phaseRepository;
+        return prescriptionRepository;
+      }),
+    };
+
+    const dataSource = {
+      transaction: jest.fn(async (callback) => callback(manager)),
+    };
+
+    const clinicalCatalogService = {
+      findMedicationById: jest.fn(async (clinicalMedicationId: string) => {
+        if (clinicalMedicationId === 'clinical-2') {
+          return buildClinicalMedicationForUpdate(
+            'clinical-2',
+            'protocol-2',
+            GroupCode.GROUP_II,
+          );
+        }
+        return buildClinicalMedicationForUpdate(
+          'clinical-1',
+          'protocol-1',
+          GroupCode.GROUP_I,
+        );
+      }),
+    };
+
+    const schedulingService = {
+      buildAndPersistSchedule: jest.fn(async (prescription) => ({
+        prescriptionId: prescription.id,
+        medicationCount: prescription.medications.length,
+      })),
+    };
+
+    const service = new PatientPrescriptionService(
+      prescriptionRepository as never,
+      dataSource as never,
+      { findById: jest.fn() } as never,
+      clinicalCatalogService as never,
+      schedulingService as never,
+    );
+
+    return {
+      service,
+      state,
+      prescriptionRepository,
+      medicationRepository,
+      phaseRepository,
+      schedulingService,
+      clinicalCatalogService,
+    };
+  }
+
+  it('appends phases and recalculates schedule', async () => {
+    const { service, state, schedulingService } = createUpdateServiceHarness();
+
+    const result = await service.appendPhases('rx-1', 'med-1', {
+      phases: [buildUpsertPhase({ treatmentDays: 7 })],
+    } as never);
+
+    const phases = (
+      state.prescription.medications as Array<{ id: string; phases: Array<{ phaseOrder: number }> }>
+    )[0].phases;
+    expect(phases.map((phase) => phase.phaseOrder)).toEqual([1, 2]);
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ prescriptionId: 'rx-1', medicationCount: 1 });
+  });
+
+  it('updates an existing phase by phaseId and keeps sequential order', async () => {
+    const { service, state } = createUpdateServiceHarness();
+
+    await service.updatePrescription('rx-1', {
+      updateMedications: [
+        {
+          prescriptionMedicationId: 'med-1',
+          updatePhases: [
+            {
+              phaseId: 'phase-1',
+              manualAdjustmentEnabled: true,
+              manualTimes: ['09:00'],
+            },
+          ],
+        },
+      ],
+    } as never);
+
+    const phase = (
+      state.prescription.medications as Array<{ phases: Array<{ id: string; phaseOrder: number; manualAdjustmentEnabled: boolean; manualTimes?: string[] }> }>
+    )[0].phases.find((item) => item.id === 'phase-1');
+    expect(phase?.phaseOrder).toBe(1);
+    expect(phase?.manualAdjustmentEnabled).toBe(true);
+    expect(phase?.manualTimes).toEqual(['09:00']);
+  });
+
+  it('replaces all phases of a medication', async () => {
+    const { service, state } = createUpdateServiceHarness();
+
+    await service.updatePrescription('rx-1', {
+      updateMedications: [
+        {
+          prescriptionMedicationId: 'med-1',
+          replacePhases: [buildUpsertPhase(), buildUpsertPhase({ treatmentDays: 5 })],
+        },
+      ],
+    } as never);
+
+    const phases = (
+      state.prescription.medications as Array<{ id: string; phases: Array<{ phaseOrder: number }> }>
+    )[0].phases;
+    expect(phases).toHaveLength(2);
+    expect(phases.map((phase) => phase.phaseOrder)).toEqual([1, 2]);
+  });
+
+  it('supports add and remove medications in a single update', async () => {
+    const { service, state, schedulingService } = createUpdateServiceHarness();
+
+    const result = await service.updatePrescription('rx-1', {
+      addMedications: [
+        {
+          clinicalMedicationId: 'clinical-2',
+          protocolId: 'protocol-2',
+          phases: [buildUpsertPhase()],
+        },
+      ],
+      removeMedicationIds: ['med-1'],
+    } as never);
+
+    const medications = state.prescription.medications as Array<{ sourceClinicalMedicationId: string }>;
+    expect(medications).toHaveLength(1);
+    expect(medications[0].sourceClinicalMedicationId).toBe('clinical-2');
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ prescriptionId: 'rx-1', medicationCount: 1 });
+  });
+
+  it('renumbers phaseOrder after removePhaseIds', async () => {
+    const { service, state } = createUpdateServiceHarness({
+      medications: [
+        {
+          ...(buildPrescriptionState().medications[0] as Record<string, unknown>),
+          phases: [
+            { id: 'phase-1', phaseOrder: 1, ...buildUpsertPhase() },
+            { id: 'phase-2', phaseOrder: 2, ...buildUpsertPhase({ treatmentDays: 5 }) },
+          ],
+        },
+      ],
+    });
+
+    await service.updatePrescription('rx-1', {
+      updateMedications: [
+        {
+          prescriptionMedicationId: 'med-1',
+          removePhaseIds: ['phase-1'],
+        },
+      ],
+    } as never);
+
+    const phases = (
+      state.prescription.medications as Array<{ id: string; phases: Array<{ id: string; phaseOrder: number }> }>
+    )[0].phases;
+    expect(phases).toHaveLength(1);
+    expect(phases[0].id).toBe('phase-2');
+    expect(phases[0].phaseOrder).toBe(1);
+  });
+
+  it('rejects unknown prescriptionMedicationId in update', async () => {
+    const { service } = createUpdateServiceHarness();
+
+    await expect(
+      service.updatePrescription('rx-1', {
+        updateMedications: [
+          {
+            prescriptionMedicationId: 'med-inexistente',
+            removePhaseIds: ['phase-1'],
+          },
+        ],
+      } as never),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects unknown phaseId in updatePhases', async () => {
+    const { service } = createUpdateServiceHarness();
+
+    await expect(
+      service.updatePrescription('rx-1', {
+        updateMedications: [
+          {
+            prescriptionMedicationId: 'med-1',
+            updatePhases: [
+              {
+                phaseId: 'phase-inexistente',
+                treatmentDays: 20,
+              },
+            ],
+          },
+        ],
+      } as never),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects duplicate clinicalMedicationId + protocolId after update', async () => {
+    const { service } = createUpdateServiceHarness();
+
+    await expect(
+      service.updatePrescription('rx-1', {
+        addMedications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [buildUpsertPhase()],
+          },
+        ],
+      } as never),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('rejects replacePhases combined with updatePhases/removePhaseIds', async () => {
+    const { service } = createUpdateServiceHarness();
+
+    await expect(
+      service.updatePrescription('rx-1', {
+        updateMedications: [
+          {
+            prescriptionMedicationId: 'med-1',
+            replacePhases: [buildUpsertPhase()],
+            updatePhases: [
+              {
+                phaseId: 'phase-1',
+                treatmentDays: 20,
+              },
+            ],
+          },
+        ],
+      } as never),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
 });

@@ -17,6 +17,24 @@ describe('Scheduling routes', () => {
     ).toBe(RequestMethod.GET);
   });
 
+  it('registers append phases route POST /patient-prescriptions/:id/medications/:prescriptionMedicationId/phases', () => {
+    expect(
+      Reflect.getMetadata(PATH_METADATA, PatientPrescriptionController.prototype.appendPhases),
+    ).toBe(':id/medications/:prescriptionMedicationId/phases');
+    expect(
+      Reflect.getMetadata(METHOD_METADATA, PatientPrescriptionController.prototype.appendPhases),
+    ).toBe(RequestMethod.POST);
+  });
+
+  it('registers update prescription route PATCH /patient-prescriptions/:id', () => {
+    expect(Reflect.getMetadata(PATH_METADATA, PatientPrescriptionController.prototype.update)).toBe(
+      ':id',
+    );
+    expect(Reflect.getMetadata(METHOD_METADATA, PatientPrescriptionController.prototype.update)).toBe(
+      RequestMethod.PATCH,
+    );
+  });
+
   it('does not register legacy schedules controller route', () => {
     const controllers: Array<new (...args: unknown[]) => unknown> =
       Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, SchedulingModule) ?? [];

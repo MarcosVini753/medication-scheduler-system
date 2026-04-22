@@ -9,7 +9,7 @@ import { PrnReason } from '../../../common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
 import { MonthlySpecialReference } from '../../../common/enums/monthly-special-reference.enum';
 
-type PhaseLike = {
+export type PhaseLike = {
   phaseOrder?: number;
   frequency?: number;
   sameDosePerSchedule?: boolean;
@@ -68,7 +68,7 @@ export function IsPatientPrescriptionPhaseValid(
   };
 }
 
-function getPhaseValidationError(phase: PhaseLike): string | undefined {
+export function getPhaseValidationError(phase: PhaseLike): string | undefined {
   const hasMonthlySpecialReference = Boolean(phase.monthlySpecialReference);
   const hasMonthlySpecialBaseDate = Boolean(phase.monthlySpecialBaseDate);
   const hasMonthlySpecialOffsetDays = phase.monthlySpecialOffsetDays !== undefined;
