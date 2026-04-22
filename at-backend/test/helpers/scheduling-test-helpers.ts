@@ -1,19 +1,32 @@
 import 'reflect-metadata';
 import { Repository } from 'typeorm';
+import { ClinicalAnchor } from '../../src/common/enums/clinical-anchor.enum';
+import { ClinicalInteractionType } from '../../src/common/enums/clinical-interaction-type.enum';
+import { ClinicalResolutionType } from '../../src/common/enums/clinical-resolution-type.enum';
+import { ClinicalSemanticTag } from '../../src/common/enums/clinical-semantic-tag.enum';
 import { DoseUnit } from '../../src/common/enums/dose-unit.enum';
 import { GroupCode } from '../../src/common/enums/group-code.enum';
 import { ScheduleStatus } from '../../src/common/enums/schedule-status.enum';
 import { TreatmentRecurrence } from '../../src/common/enums/treatment-recurrence.enum';
-import { MedicationCatalog } from '../../src/modules/medications/entities/medication-catalog.entity';
-import { MedicationGroup } from '../../src/modules/medications/entities/medication-group.entity';
-import { PrescriptionItem } from '../../src/modules/prescriptions/entities/prescription-item.entity';
-import { Prescription } from '../../src/modules/prescriptions/entities/prescription.entity';
+import {
+  ClinicalInteractionRuleSnapshot,
+  ClinicalMedicationSnapshot,
+  ClinicalProtocolSnapshot,
+  ProtocolStepSnapshot,
+  PrescriptionPhaseDoseOverride,
+} from '../../src/modules/patient-prescriptions/entities/patient-prescription-snapshot.types';
+import { PatientPrescriptionMedication } from '../../src/modules/patient-prescriptions/entities/patient-prescription-medication.entity';
+import { PatientPrescriptionPhase } from '../../src/modules/patient-prescriptions/entities/patient-prescription-phase.entity';
+import { PatientPrescription } from '../../src/modules/patient-prescriptions/entities/patient-prescription.entity';
 import {
   ScheduleEntryDto,
+  ScheduledMedicationDto,
+  ScheduledPhaseDto,
   SchedulingResultDto,
 } from '../../src/modules/scheduling/dto/schedule-response.dto';
 import { ScheduledDose } from '../../src/modules/scheduling/entities/scheduled-dose.entity';
 import { SchedulingService } from '../../src/modules/scheduling/scheduling.service';
+import { ConflictResolutionService } from '../../src/modules/scheduling/services/conflict-resolution.service';
 import { SchedulingRulesService } from '../../src/modules/scheduling/services/scheduling-rules.service';
 
 export interface RoutineFixture {
@@ -45,13 +58,8 @@ function nextId(prefix: string): string {
   return `${prefix}-${sequence}`;
 }
 
-export function buildRoutine(
-  overrides: Partial<RoutineFixture> = {},
-): RoutineFixture {
-  return {
-    ...DEFAULT_ROUTINE,
-    ...overrides,
-  };
+export function buildRoutine(overrides: Partial<RoutineFixture> = {}): RoutineFixture {
+  return { ...DEFAULT_ROUTINE, ...overrides };
 }
 
 export function createSchedulingService(
@@ -74,12 +82,10 @@ export function createSchedulingService(
 
   const prescriptionRepository = {
     findOne: jest.fn(),
-  } as unknown as jest.Mocked<Repository<Prescription>>;
+  } as unknown as jest.Mocked<Repository<PatientPrescription>>;
 
   const patientService = {
-    getActiveRoutine: jest
-      .fn()
-      .mockResolvedValue(options.routine ?? buildRoutine()),
+    getActiveRoutine: jest.fn().mockResolvedValue(options.routine ?? buildRoutine()),
   };
 
   const service = new SchedulingService(
@@ -87,112 +93,264 @@ export function createSchedulingService(
     prescriptionRepository,
     patientService as never,
     new SchedulingRulesService(),
+    new ConflictResolutionService(),
   );
 
   return { service, scheduledDoseRepository };
 }
 
-export function buildGroup(
-  overrides: Partial<MedicationGroup> = {},
-): MedicationGroup {
+export function buildMedicationSnapshot(
+  overrides: Partial<ClinicalMedicationSnapshot> = {},
+): ClinicalMedicationSnapshot {
   return {
-    id: nextId('group'),
-    code: GroupCode.GROUP_I,
-    name: 'Grupo I',
-    description: 'Grupo de teste',
-    medications: [],
-    ...overrides,
-  };
-}
-
-export function buildMedication(
-  group: MedicationGroup,
-  overrides: Partial<MedicationCatalog> = {},
-): MedicationCatalog {
-  return {
-    id: nextId('medication'),
+    id: nextId('clinical-medication'),
     commercialName: 'Medicamento Teste',
-    activePrinciple: 'Principio ativo',
+    activePrinciple: 'Princípio ativo',
     presentation: 'Caixa',
-    administrationRoute: 'ORAL',
-    usageInstructions: 'Conforme prescricao',
-    interferesWithSalts: false,
-    group,
+    administrationRoute: 'VO',
+    usageInstructions: 'Conforme prescrição.',
     ...overrides,
   };
 }
 
-type ItemOverrides = Omit<Partial<PrescriptionItem>, 'medication'> & {
-  medication?: Partial<MedicationCatalog>;
-  group?: Partial<MedicationGroup>;
+export function buildInteractionRule(
+  overrides: Partial<ClinicalInteractionRuleSnapshot> = {},
+): ClinicalInteractionRuleSnapshot {
+  return {
+    interactionType: ClinicalInteractionType.AFFECTED_BY_SALTS,
+    resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+    priority: 0,
+    ...overrides,
+  };
+}
+
+export function buildProtocolSnapshot(
+  groupCode: string,
+  overrides: Partial<ClinicalProtocolSnapshot> = {},
+): ClinicalProtocolSnapshot {
+  return {
+    id: nextId('protocol'),
+    code: `${groupCode}_DEFAULT`,
+    name: `${groupCode} default`,
+    description: 'Protocolo de teste',
+    groupCode,
+    priority: 0,
+    isDefault: true,
+    frequencies: buildDefaultFrequencies(groupCode),
+    ...overrides,
+  };
+}
+
+function buildDefaultFrequencies(groupCode: string) {
+  const step = (
+    doseLabel: string,
+    anchor: ClinicalAnchor,
+    offsetMinutes: number,
+    semanticTag: ClinicalSemanticTag = ClinicalSemanticTag.STANDARD,
+  ): ProtocolStepSnapshot => ({
+    doseLabel,
+    anchor,
+    offsetMinutes,
+    semanticTag,
+  });
+
+  const recipes: Record<string, Array<{ frequency: number; steps: ProtocolStepSnapshot[] }>> = {
+    [GroupCode.GROUP_I]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.CAFE, 0)] },
+      { frequency: 2, steps: [step('D1', ClinicalAnchor.CAFE, 0), step('D2', ClinicalAnchor.JANTAR, 0)] },
+      { frequency: 3, steps: [step('D1', ClinicalAnchor.CAFE, 0), step('D2', ClinicalAnchor.LANCHE, 0), step('D3', ClinicalAnchor.DORMIR, 0)] },
+      { frequency: 4, steps: [step('D1', ClinicalAnchor.ACORDAR, 0), step('D2', ClinicalAnchor.ACORDAR, 360), step('D3', ClinicalAnchor.ACORDAR, 720), step('D4', ClinicalAnchor.ACORDAR, 1080)] },
+    ],
+    [GroupCode.GROUP_II_BIFOS]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.ACORDAR, -60)] },
+    ],
+    [GroupCode.GROUP_III_MET]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.JANTAR, 0)] },
+      { frequency: 2, steps: [step('D1', ClinicalAnchor.CAFE, 0), step('D2', ClinicalAnchor.JANTAR, 0)] },
+      { frequency: 3, steps: [step('D1', ClinicalAnchor.CAFE, 0), step('D2', ClinicalAnchor.ALMOCO, 0), step('D3', ClinicalAnchor.JANTAR, 0)] },
+    ],
+    [GroupCode.GROUP_III_SAL]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.ALMOCO, 120)] },
+      { frequency: 2, steps: [step('D1', ClinicalAnchor.CAFE, 120), step('D2', ClinicalAnchor.DORMIR, 0)] },
+    ],
+    [GroupCode.GROUP_II_SUCRA]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.ACORDAR, 120)] },
+      { frequency: 2, steps: [step('D1', ClinicalAnchor.ACORDAR, 120), step('D2', ClinicalAnchor.DORMIR, 0, ClinicalSemanticTag.BEDTIME_SLOT)] },
+    ],
+    [GroupCode.GROUP_III_CALC]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.CAFE, 180)] },
+      { frequency: 2, steps: [step('D1', ClinicalAnchor.CAFE, 180), step('D2', ClinicalAnchor.DORMIR, 0)] },
+    ],
+    [GroupCode.GROUP_I_SED]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.DORMIR, -20, ClinicalSemanticTag.BEDTIME_EQUIVALENT)] },
+    ],
+    [GroupCode.GROUP_III]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.CAFE, 0)] },
+      { frequency: 2, steps: [step('D1', ClinicalAnchor.CAFE, 0), step('D2', ClinicalAnchor.JANTAR, 0)] },
+    ],
+    [GroupCode.GROUP_DELTA]: [
+      { frequency: 1, steps: [step('D1', ClinicalAnchor.ACORDAR, 0)] },
+    ],
+  };
+
+  return recipes[groupCode] ?? [{ frequency: 1, steps: [step('D1', ClinicalAnchor.CAFE, 0)] }];
+}
+
+type PhaseOverrides = Omit<Partial<PatientPrescriptionPhase>, 'perDoseOverrides'> & {
+  perDoseOverrides?: PrescriptionPhaseDoseOverride[];
 };
 
-export function buildItem(overrides: ItemOverrides = {}): PrescriptionItem {
-  const { medication: medicationOverrides, group: groupOverrides, ...itemOverrides } =
-    overrides;
-  const group = buildGroup(groupOverrides);
-  const medication = buildMedication(group, medicationOverrides);
-
+export function buildPhase(overrides: PhaseOverrides = {}): PatientPrescriptionPhase {
   return {
-    id: nextId('item'),
+    id: nextId('phase'),
+    phaseOrder: 1,
     frequency: 1,
+    sameDosePerSchedule: true,
     doseAmount: '1 COMP',
-    recurrenceType: TreatmentRecurrence.DAILY,
     doseValue: '1',
     doseUnit: DoseUnit.COMP,
-    sameDosePerSchedule: true,
     perDoseOverrides: undefined,
-    dailyTreatment: true,
-    alternateDaysInterval: undefined,
+    recurrenceType: TreatmentRecurrence.DAILY,
     weeklyDay: undefined,
     monthlyRule: undefined,
     monthlyDay: undefined,
+    alternateDaysInterval: undefined,
     treatmentDays: 10,
     continuousUse: false,
     prnReason: undefined,
-    crisisOnly: false,
-    feverOnly: false,
-    painOnly: false,
     manualAdjustmentEnabled: false,
     manualTimes: undefined,
-    schedules: [],
-    medication,
-    ...itemOverrides,
-  } as PrescriptionItem;
+    ...overrides,
+  } as PatientPrescriptionPhase;
 }
 
-export function buildPrescription(
-  items: PrescriptionItem[],
-  overrides: Partial<Prescription> = {},
-): Prescription {
+type PrescriptionMedicationOverrides = Omit<
+  Partial<PatientPrescriptionMedication>,
+  'medicationSnapshot' | 'protocolSnapshot' | 'interactionRulesSnapshot' | 'phases'
+> & {
+  medicationSnapshot?: Partial<ClinicalMedicationSnapshot>;
+  protocolSnapshot?: Partial<ClinicalProtocolSnapshot>;
+  interactionRulesSnapshot?: ClinicalInteractionRuleSnapshot[];
+  phases?: PatientPrescriptionPhase[];
+};
+
+export function buildPrescriptionMedication(
+  overrides: PrescriptionMedicationOverrides = {},
+): PatientPrescriptionMedication {
+  const {
+    medicationSnapshot: medicationSnapshotOverrides,
+    protocolSnapshot: protocolSnapshotOverrides,
+    interactionRulesSnapshot,
+    phases,
+    ...entityOverrides
+  } = overrides;
+  const medicationSnapshot = buildMedicationSnapshot(medicationSnapshotOverrides);
+  const groupCode = protocolSnapshotOverrides?.groupCode ?? GroupCode.GROUP_I;
+  const protocolSnapshot = buildProtocolSnapshot(groupCode, protocolSnapshotOverrides);
   return {
-    id: nextId('prescription'),
-    startedAt: '2026-04-17',
+    id: nextId('prescription-medication'),
+    sourceClinicalMedicationId: medicationSnapshot.id,
+    sourceProtocolId: protocolSnapshot.id,
+    medicationSnapshot,
+    protocolSnapshot,
+    interactionRulesSnapshot: interactionRulesSnapshot ?? [],
+    phases: phases ?? [buildPhase()],
+    ...entityOverrides,
+  } as PatientPrescriptionMedication;
+}
+
+export function buildPatientPrescription(
+  medications: PatientPrescriptionMedication[],
+  overrides: Partial<PatientPrescription> = {},
+): PatientPrescription {
+  return {
+    id: nextId('patient-prescription'),
     patient: {
       id: nextId('patient'),
       fullName: 'Paciente Teste',
       birthDate: '1970-01-01',
       rg: 'RG-TESTE',
       cpf: '000.000.000-00',
-      phone: '(68) 99999-9999',
+      phone: '(68)99999-9999',
       routines: [],
       prescriptions: [],
     },
+    startedAt: '2026-04-17',
     status: 'ACTIVE',
-    items: items.map((item) => ({
-      ...item,
-      prescription: undefined as unknown as Prescription,
+    medications: medications.map((medication) => ({
+      ...medication,
+      prescription: undefined as unknown as PatientPrescription,
+      phases: medication.phases.map((phase) => ({
+        ...phase,
+        prescriptionMedication: undefined as unknown as PatientPrescriptionMedication,
+      })),
     })),
     ...overrides,
-  } as Prescription;
+  } as PatientPrescription;
 }
 
 export async function buildScheduleResult(
   service: SchedulingService,
-  items: PrescriptionItem[],
-  overrides: Partial<Prescription> = {},
+  medications: PatientPrescriptionMedication[],
+  overrides: Partial<PatientPrescription> = {},
 ): Promise<SchedulingResultDto> {
-  return service.buildAndPersistSchedule(buildPrescription(items, overrides));
+  return service.buildAndPersistSchedule(buildPatientPrescription(medications, overrides));
+}
+
+export function flattenEntries(result: SchedulingResultDto): ScheduleEntryDto[] {
+  return result.medications.flatMap((medication) =>
+    medication.phases.flatMap((phase) => phase.entries),
+  );
+}
+
+export function findEntryByTime(
+  result: SchedulingResultDto,
+  medicationName: string,
+  timeFormatted: string,
+): ScheduleEntryDto | undefined {
+  return flattenEntries(result).find(
+    (entry) =>
+      entry.timeFormatted === timeFormatted &&
+      result.medications.some(
+        (medication) =>
+          medication.medicationName === medicationName &&
+          medication.phases.some((phase) => phase.entries.includes(entry)),
+      ),
+  );
+}
+
+export function findEntriesByMedication(
+  result: SchedulingResultDto,
+  medicationName: string,
+): ScheduleEntryDto[] {
+  const medication = findMedication(result, medicationName);
+  if (!medication) return [];
+  return medication.phases.flatMap((phase) => phase.entries);
+}
+
+export function findEntriesByMedicationAndTime(
+  result: SchedulingResultDto,
+  medicationName: string,
+  timeFormatted: string,
+): ScheduleEntryDto[] {
+  return findEntriesByMedication(result, medicationName).filter(
+    (entry) => entry.timeFormatted === timeFormatted,
+  );
+}
+
+export function findMedication(
+  result: SchedulingResultDto,
+  medicationName: string,
+): ScheduledMedicationDto | undefined {
+  return result.medications.find((medication) => medication.medicationName === medicationName);
+}
+
+export function findPhase(
+  result: SchedulingResultDto,
+  medicationName: string,
+  phaseOrder: number,
+): ScheduledPhaseDto | undefined {
+  return findMedication(result, medicationName)?.phases.find((phase) => phase.phaseOrder === phaseOrder);
 }
 
 export function expectEntry(
@@ -215,16 +373,4 @@ export function expectInactiveEntry(
     status: ScheduleStatus.INACTIVE,
     ...expectation,
   });
-}
-
-export function findEntryByTime(
-  result: SchedulingResultDto,
-  medicationName: string,
-  timeFormatted: string,
-): ScheduleEntryDto | undefined {
-  return result.entries.find(
-    (entry) =>
-      entry.medicationName === medicationName &&
-      entry.timeFormatted === timeFormatted,
-  );
 }

@@ -5,7 +5,7 @@ import { SchedulingService } from './scheduling.service';
 export class SchedulingController {
   constructor(private readonly schedulingService: SchedulingService) {}
 
-  @Get('prescription/:id')
+  @Get('patient-prescription/:id')
   findByPrescription(@Param('id') id: string) {
     return this.schedulingService.getScheduleByPrescription(id);
   }

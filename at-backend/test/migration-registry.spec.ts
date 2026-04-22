@@ -1,0 +1,16 @@
+import 'reflect-metadata';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+describe('Migration registry', () => {
+  it('keeps only the consolidated baseline migration in the main migrations folder', () => {
+    const migrationDir = join(__dirname, '..', 'src', 'database', 'migrations');
+    const migrationFiles = readdirSync(migrationDir)
+      .filter((file) => file.endsWith('.ts'))
+      .sort();
+
+    expect(migrationFiles).toEqual([
+      '1763406000000-BaselineClinicalCatalogAndPatientPrescriptions.ts',
+    ]);
+  });
+});

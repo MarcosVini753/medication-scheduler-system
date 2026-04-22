@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PatientModule } from './modules/patients/patient.module';
-import { MedicationModule } from './modules/medications/medication.module';
-import { PrescriptionModule } from './modules/prescriptions/prescription.module';
+import { ClinicalCatalogModule } from './modules/clinical-catalog/clinical-catalog.module';
+import { PatientPrescriptionModule } from './modules/patient-prescriptions/patient-prescription.module';
 import { SchedulingModule } from './modules/scheduling/scheduling.module';
 
 function isTrue(value: string | undefined): boolean {
@@ -39,8 +39,8 @@ export function buildTypeOrmOptions(configService: ConfigService) {
       useFactory: buildTypeOrmOptions
     }),
     PatientModule,
-    MedicationModule,
-    PrescriptionModule,
+    ClinicalCatalogModule,
+    PatientPrescriptionModule,
     SchedulingModule
   ]
 })

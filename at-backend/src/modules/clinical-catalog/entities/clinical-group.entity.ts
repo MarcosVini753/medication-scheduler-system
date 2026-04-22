@@ -1,8 +1,8 @@
 import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
-import { MedicationCatalog } from './medication-catalog.entity';
+import { ClinicalProtocol } from './clinical-protocol.entity';
 
-@Entity('medication_groups')
-export class MedicationGroup {
+@Entity('clinical_groups')
+export class ClinicalGroup {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -15,6 +15,6 @@ export class MedicationGroup {
   @Column({ type: 'text' })
   description: string;
 
-  @OneToMany(() => MedicationCatalog, (catalog) => catalog.group)
-  medications: MedicationCatalog[];
+  @OneToMany(() => ClinicalProtocol, (protocol) => protocol.group)
+  protocols: ClinicalProtocol[];
 }

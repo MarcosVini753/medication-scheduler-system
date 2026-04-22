@@ -1,41 +1,64 @@
 import 'reflect-metadata';
 import { QueryRunner } from 'typeorm';
-import { AddCreatedAtToPatientRoutines1763405000000 } from '../src/database/migrations/1763405000000-AddCreatedAtToPatientRoutines';
+import { BaselineClinicalCatalogAndPatientPrescriptions1763406000000 } from '../src/database/migrations/1763406000000-BaselineClinicalCatalogAndPatientPrescriptions';
 
-describe('AddCreatedAtToPatientRoutines1763405000000', () => {
-  it('drops the old index before deduplicating and recreates it afterwards', async () => {
-    const migration = new AddCreatedAtToPatientRoutines1763405000000();
+describe('BaselineClinicalCatalogAndPatientPrescriptions1763406000000', () => {
+  it('creates the new baseline tables for clinical catalog and patient prescriptions', async () => {
+    const migration = new BaselineClinicalCatalogAndPatientPrescriptions1763406000000();
     const executedQueries: string[] = [];
     const queryRunner = {
       query: jest.fn(async (sql: string) => {
         executedQueries.push(normalizeSql(sql));
-      })
+      }),
     } as unknown as QueryRunner;
 
     await migration.up(queryRunner);
 
-    expect(executedQueries).toHaveLength(5);
-    expect(executedQueries[0]).toContain('ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()');
-    expect(executedQueries[1]).toContain('SET "createdAt" = NOW()');
-    expect(executedQueries[2]).toContain('DROP INDEX IF EXISTS "IDX_patient_routines_single_active"');
-    expect(executedQueries[3]).toContain('ORDER BY "createdAt" DESC, id DESC');
-    expect(executedQueries[4]).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "IDX_patient_routines_single_active"');
+    expect(executedQueries).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('CREATE TABLE IF NOT EXISTS "clinical_groups"'),
+        expect.stringContaining('CREATE TABLE IF NOT EXISTS "clinical_medications"'),
+        expect.stringContaining('CREATE TABLE IF NOT EXISTS "clinical_protocols"'),
+        expect.stringContaining('CREATE TABLE IF NOT EXISTS "patient_prescriptions"'),
+        expect.stringContaining(
+          'CREATE TABLE IF NOT EXISTS "patient_prescription_medications"',
+        ),
+        expect.stringContaining(
+          'CREATE TABLE IF NOT EXISTS "patient_prescription_phases"',
+        ),
+        expect.stringContaining('CREATE TABLE IF NOT EXISTS "scheduled_doses"'),
+        expect.stringContaining(
+          'CREATE UNIQUE INDEX IF NOT EXISTS "IDX_patient_routines_single_active"',
+        ),
+        expect.stringContaining('"timeFormatted" time NOT NULL'),
+        expect.stringContaining('WHERE active = true'),
+      ]),
+    );
   });
 
-  it('drops the recreated index before removing createdAt on down', async () => {
-    const migration = new AddCreatedAtToPatientRoutines1763405000000();
+  it('drops the baseline tables in reverse order on down', async () => {
+    const migration = new BaselineClinicalCatalogAndPatientPrescriptions1763406000000();
     const executedQueries: string[] = [];
     const queryRunner = {
       query: jest.fn(async (sql: string) => {
         executedQueries.push(normalizeSql(sql));
-      })
+      }),
     } as unknown as QueryRunner;
 
     await migration.down(queryRunner);
 
     expect(executedQueries).toEqual([
       expect.stringContaining('DROP INDEX IF EXISTS "IDX_patient_routines_single_active"'),
-      expect.stringContaining('DROP COLUMN IF EXISTS "createdAt"')
+      expect.stringContaining('DROP TABLE IF EXISTS "scheduled_doses"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "patient_prescription_phases"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "patient_prescription_medications"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "patient_prescriptions"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "clinical_interaction_rules"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "clinical_protocol_steps"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "clinical_protocol_frequencies"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "clinical_protocols"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "clinical_medications"'),
+      expect.stringContaining('DROP TABLE IF EXISTS "clinical_groups"'),
     ]);
   });
 });

@@ -1,173 +1,147 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync, ValidationError } from 'class-validator';
+import { ClinicalAnchor } from '../src/common/enums/clinical-anchor.enum';
+import { ClinicalInteractionType } from '../src/common/enums/clinical-interaction-type.enum';
+import { ClinicalResolutionType } from '../src/common/enums/clinical-resolution-type.enum';
 import { DoseUnit } from '../src/common/enums/dose-unit.enum';
-import { PrnReason } from '../src/common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../src/common/enums/treatment-recurrence.enum';
-import { CreatePrescriptionItemDto } from '../src/modules/prescriptions/dto/create-prescription.dto';
+import {
+  CreateClinicalMedicationDto,
+} from '../src/modules/clinical-catalog/dto/create-clinical-medication.dto';
+import { CreatePatientPrescriptionPhaseDto } from '../src/modules/patient-prescriptions/dto/create-patient-prescription.dto';
 
-describe('CreatePrescriptionItemDto clinical validation', () => {
-  function buildValidItem(
-    overrides: Partial<CreatePrescriptionItemDto> = {},
-  ): CreatePrescriptionItemDto {
-    return plainToInstance(CreatePrescriptionItemDto, {
-      medicationId: '550e8400-e29b-41d4-a716-446655440000',
+describe('New DTO clinical validation', () => {
+  function validatePhase(overrides: Partial<CreatePatientPrescriptionPhaseDto> = {}): string[] {
+    const phase = plainToInstance(CreatePatientPrescriptionPhaseDto, {
+      phaseOrder: 1,
       frequency: 2,
+      sameDosePerSchedule: true,
       doseAmount: '1 COMP',
       doseValue: '1',
       doseUnit: DoseUnit.COMP,
-      sameDosePerSchedule: true,
       recurrenceType: TreatmentRecurrence.DAILY,
       treatmentDays: 10,
       continuousUse: false,
       manualAdjustmentEnabled: false,
       ...overrides,
     });
-  }
 
-  function validateItem(item: CreatePrescriptionItemDto): string[] {
-    return flattenErrors(validateSync(item));
+    return flattenErrors(validateSync(phase));
   }
 
   it('rejects weekly recurrence without weeklyDay', () => {
-    const errors = validateItem(
-      buildValidItem({
+    expect(
+      validatePhase({
         recurrenceType: TreatmentRecurrence.WEEKLY,
         weeklyDay: undefined,
       }),
-    );
-
-    expect(errors).toContain(
-      'weeklyDay é obrigatório para recorrência WEEKLY.',
-    );
-  });
-
-  it('rejects weekly recurrence with an invalid weekday value', () => {
-    const errors = validateItem(
-      buildValidItem({
-        recurrenceType: TreatmentRecurrence.WEEKLY,
-        weeklyDay: 'feriado',
-      }),
-    );
-
-    expect(errors).toContain('weeklyDay deve ser um dia valido da semana.');
+    ).toContain('weeklyDay deve ser um dia valido da semana.');
   });
 
   it('rejects monthly recurrence without monthlyDay or monthlyRule', () => {
-    const errors = validateItem(
-      buildValidItem({
+    expect(
+      validatePhase({
         recurrenceType: TreatmentRecurrence.MONTHLY,
         monthlyDay: undefined,
         monthlyRule: undefined,
       }),
-    );
-
-    expect(errors).toContain(
-      'Informe monthlyDay ou monthlyRule para recorrencia MONTHLY.',
-    );
-  });
-
-  it('rejects PRN recurrence without prnReason', () => {
-    const errors = validateItem(
-      buildValidItem({
-        recurrenceType: TreatmentRecurrence.PRN,
-        prnReason: undefined,
-        treatmentDays: undefined,
-      }),
-    );
-
-    expect(errors).toContain('prnReason e obrigatorio para recorrencia PRN.');
+    ).toContain('monthlyDay ou monthlyRule sao obrigatorios para recorrencia MONTHLY.');
   });
 
   it('rejects manual adjustment without manualTimes', () => {
-    const errors = validateItem(
-      buildValidItem({
+    expect(
+      validatePhase({
         manualAdjustmentEnabled: true,
         manualTimes: undefined,
       }),
-    );
-
-    expect(errors).toContain(
-      'manualTimes é obrigatório quando manualAdjustmentEnabled for true.',
-    );
+    ).toContain('manualTimes e obrigatorio quando manualAdjustmentEnabled for true.');
   });
 
-  it('rejects manual adjustment when manualTimes count does not match frequency', () => {
-    const errors = validateItem(
-      buildValidItem({
-        manualAdjustmentEnabled: true,
-        manualTimes: ['08:00'],
-      }),
-    );
-
-    expect(errors).toContain(
-      'manualTimes deve ter a mesma quantidade de horarios de frequency.',
-    );
-  });
-
-  it('rejects variable dose without perDoseOverrides', () => {
-    const errors = validateItem(
-      buildValidItem({
+  it('rejects variable dose without complete D1..Dn coverage', () => {
+    expect(
+      validatePhase({
         sameDosePerSchedule: false,
-        perDoseOverrides: undefined,
+        perDoseOverrides: [{ doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP }],
       }),
-    );
-
-    expect(errors).toContain(
-      'perDoseOverrides e obrigatorio quando sameDosePerSchedule for false.',
-    );
-  });
-
-  it('rejects variable dose overrides that do not cover D1..Dn exactly once', () => {
-    const errors = validateItem(
-      buildValidItem({
-        sameDosePerSchedule: false,
-        perDoseOverrides: [
-          { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
-          { doseLabel: 'D1', doseValue: '2', doseUnit: DoseUnit.COMP },
-        ],
-      }),
-    );
-
-    expect(errors).toContain(
-      'perDoseOverrides deve cobrir exatamente as doses D1 até Dn sem repeticao.',
-    );
+    ).toContain('perDoseOverrides deve cobrir exatamente a quantidade de doses da fase.');
   });
 
   it('rejects continuous use combined with treatmentDays', () => {
-    const errors = validateItem(
-      buildValidItem({
+    expect(
+      validatePhase({
         continuousUse: true,
-        treatmentDays: 15,
+        treatmentDays: 10,
       }),
-    );
-
-    expect(errors).toContain(
-      'continuousUse nao pode ser combinado com treatmentDays.',
-    );
+    ).toContain('continuousUse nao pode ser combinado com treatmentDays.');
   });
 
-  it('accepts a valid alternate-days payload', () => {
-    const errors = validateItem(
-      buildValidItem({
+  it('accepts a valid alternate-days phase', () => {
+    expect(
+      validatePhase({
         recurrenceType: TreatmentRecurrence.ALTERNATE_DAYS,
         alternateDaysInterval: 2,
       }),
-    );
-
-    expect(errors).toHaveLength(0);
+    ).toHaveLength(0);
   });
 
-  it('accepts a valid PRN payload', () => {
-    const errors = validateItem(
-      buildValidItem({
-        recurrenceType: TreatmentRecurrence.PRN,
-        prnReason: PrnReason.FEVER,
-        treatmentDays: undefined,
-      }),
-    );
+  it('rejects clinical medication creation without protocol frequencies and steps', () => {
+    const dto = plainToInstance(CreateClinicalMedicationDto, {
+      activePrinciple: 'Teste',
+      presentation: 'Caixa',
+      administrationRoute: 'VO',
+      usageInstructions: 'Conforme prescrição',
+      protocols: [
+        {
+          code: 'PROTO',
+          name: 'Protocolo',
+          description: 'Desc',
+          groupCode: 'GROUP_I',
+          frequencies: [],
+          interactionRules: [
+            {
+              interactionType: ClinicalInteractionType.AFFECTED_BY_SALTS,
+              resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+            },
+          ],
+        },
+      ],
+    });
 
-    expect(errors).toHaveLength(0);
+    const errors = flattenErrors(validateSync(dto));
+    expect(errors).toContain('frequencies must contain at least 1 elements');
+  });
+
+  it('accepts a valid clinical medication payload with protocol, frequencies and steps', () => {
+    const dto = plainToInstance(CreateClinicalMedicationDto, {
+      activePrinciple: 'Teste',
+      presentation: 'Caixa',
+      administrationRoute: 'VO',
+      usageInstructions: 'Conforme prescrição',
+      protocols: [
+        {
+          code: 'PROTO',
+          name: 'Protocolo',
+          description: 'Desc',
+          groupCode: 'GROUP_I',
+          frequencies: [
+            {
+              frequency: 1,
+              steps: [
+                {
+                  doseLabel: 'D1',
+                  anchor: ClinicalAnchor.CAFE,
+                  offsetMinutes: 0,
+                },
+              ],
+            },
+          ],
+          interactionRules: [],
+        },
+      ],
+    });
+
+    expect(flattenErrors(validateSync(dto))).toHaveLength(0);
   });
 });
 

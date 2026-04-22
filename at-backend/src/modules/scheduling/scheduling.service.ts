@@ -1,352 +1,245 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
-import { EntityManager, Repository } from "typeorm";
-import { GroupCode } from "../../common/enums/group-code.enum";
-import { MealAnchor } from "../../common/enums/meal-anchor.enum";
-import { ScheduleStatus } from "../../common/enums/schedule-status.enum";
-import { TreatmentRecurrence } from "../../common/enums/treatment-recurrence.enum";
-import {
-  buildRecurrenceMetadata,
-  buildClinicalInstructionLabel,
-  formatClinicalRecurrenceLabel,
-} from "../../common/utils/recurrence.util";
-import { minutesToHhmm, hhmmToMinutes } from "../../common/utils/time.util";
-import { PatientService } from "../patients/patient.service";
-import { Prescription } from "../prescriptions/entities/prescription.entity";
-import { PrescriptionItemDoseOverride } from "../prescriptions/entities/prescription-item.entity";
-import { PrescriptionItem } from "../prescriptions/entities/prescription-item.entity";
-import { ScheduledDose } from "./entities/scheduled-dose.entity";
-import {
-  SchedulingResultDto,
-  ScheduleEntryDto,
-} from "./dto/schedule-response.dto";
-import { SchedulingRulesService } from "./services/scheduling-rules.service";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import { ClinicalAnchor } from '../../common/enums/clinical-anchor.enum';
+import { ClinicalSemanticTag } from '../../common/enums/clinical-semantic-tag.enum';
+import { ScheduleStatus } from '../../common/enums/schedule-status.enum';
+import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
+import { calculateEndDate } from '../../common/utils/treatment-window.util';
+import { hhmmToMinutes, minutesToHhmm } from '../../common/utils/time.util';
+import { PatientService } from '../patients/patient.service';
+import { PatientPrescriptionMedication } from '../patient-prescriptions/entities/patient-prescription-medication.entity';
+import { PatientPrescriptionPhase } from '../patient-prescriptions/entities/patient-prescription-phase.entity';
+import { PatientPrescription } from '../patient-prescriptions/entities/patient-prescription.entity';
+import { ConflictResolutionService, ConflictEntryLike } from './services/conflict-resolution.service';
+import { ScheduledPhaseDto, SchedulingResultDto, ScheduleEntryDto } from './dto/schedule-response.dto';
+import { ScheduledDose } from './entities/scheduled-dose.entity';
+import { SchedulingRulesService } from './services/scheduling-rules.service';
 
-interface WorkingEntry extends ScheduleEntryDto {
-  prescriptionItem: PrescriptionItem;
-  interferesWithSalts: boolean;
+type ScheduleAnchors = Record<ClinicalAnchor, number>;
+
+interface WorkingEntry extends ScheduleEntryDto, ConflictEntryLike {
+  prescriptionMedication: PatientPrescriptionMedication;
+  phase: PatientPrescriptionPhase;
+  sourceClinicalMedicationId: string;
+  sourceProtocolId: string;
+  phaseOrder: number;
 }
-
-interface ResolvedAdministration {
-  administrationValue?: string;
-  administrationUnit?: string;
-  administrationLabel: string;
-}
-
-type ScheduleAnchors = Record<MealAnchor, number>;
 
 @Injectable()
 export class SchedulingService {
   constructor(
     @InjectRepository(ScheduledDose)
     private readonly scheduledDoseRepository: Repository<ScheduledDose>,
-    @InjectRepository(Prescription)
-    private readonly prescriptionRepository: Repository<Prescription>,
+    @InjectRepository(PatientPrescription)
+    private readonly prescriptionRepository: Repository<PatientPrescription>,
     private readonly patientService: PatientService,
     private readonly rulesService: SchedulingRulesService,
+    private readonly conflictResolutionService: ConflictResolutionService,
   ) {}
 
   async buildAndPersistSchedule(
-    prescription: Prescription,
+    prescription: PatientPrescription,
     entityManager?: EntityManager,
   ): Promise<SchedulingResultDto> {
     const anchors = await this.resolveScheduleAnchors(prescription);
-
     let entries = this.buildBaseEntries(prescription, anchors);
-    entries = entries.map((entry) => this.resolveDoseForEntry(entry));
-    entries = entries.map((entry) =>
-      this.attachClinicalMetadata(entry, prescription),
-    );
-    entries = entries.map((entry) => this.attachPrnMetadata(entry));
-    entries = this.applySpecialRules(entries, anchors);
+    entries = this.applyConflictRules(entries, anchors);
+    entries = entries.map((entry) => ({
+      ...entry,
+      timeFormatted: minutesToHhmm(entry.timeInMinutes),
+    }));
     entries = this.sortEntries(entries);
 
-    const persisted = await this.persistSchedule(
-      prescription,
-      entries,
-      entityManager,
-    );
+    const persisted = await this.persistSchedule(prescription, entries, entityManager);
     return this.mapSchedulingResult(prescription, persisted);
   }
 
-  private async resolveScheduleAnchors(
-    prescription: Prescription,
-  ): Promise<ScheduleAnchors> {
-    const routine = await this.patientService.getActiveRoutine(
-      prescription.patient.id,
-    );
+  async getScheduleByPrescription(prescriptionId: string): Promise<SchedulingResultDto> {
+    const prescription = await this.prescriptionRepository.findOne({
+      where: { id: prescriptionId },
+      relations: ['patient', 'medications', 'medications.phases'],
+    });
+    if (!prescription) {
+      throw new NotFoundException('Prescrição do paciente não encontrada.');
+    }
 
+    const scheduledDoses = await this.scheduledDoseRepository.find({
+      where: { prescription: { id: prescriptionId } },
+      relations: ['prescriptionMedication', 'phase'],
+      order: { phaseOrder: 'ASC', timeInMinutes: 'ASC' },
+    });
+
+    return this.mapSchedulingResult(prescription, scheduledDoses);
+  }
+
+  private async resolveScheduleAnchors(
+    prescription: PatientPrescription,
+  ): Promise<ScheduleAnchors> {
+    const routine = await this.patientService.getActiveRoutine(prescription.patient.id);
     return {
-      [MealAnchor.ACORDAR]: hhmmToMinutes(routine.acordar),
-      [MealAnchor.CAFE]: hhmmToMinutes(routine.cafe),
-      [MealAnchor.ALMOCO]: hhmmToMinutes(routine.almoco),
-      [MealAnchor.LANCHE]: hhmmToMinutes(routine.lanche),
-      [MealAnchor.JANTAR]: hhmmToMinutes(routine.jantar),
-      [MealAnchor.DORMIR]: hhmmToMinutes(routine.dormir),
+      [ClinicalAnchor.ACORDAR]: hhmmToMinutes(routine.acordar),
+      [ClinicalAnchor.CAFE]: hhmmToMinutes(routine.cafe),
+      [ClinicalAnchor.ALMOCO]: hhmmToMinutes(routine.almoco),
+      [ClinicalAnchor.LANCHE]: hhmmToMinutes(routine.lanche),
+      [ClinicalAnchor.JANTAR]: hhmmToMinutes(routine.jantar),
+      [ClinicalAnchor.DORMIR]: hhmmToMinutes(routine.dormir),
+      [ClinicalAnchor.MANUAL]: 0,
     };
   }
 
   private buildBaseEntries(
-    prescription: Prescription,
+    prescription: PatientPrescription,
     anchors: ScheduleAnchors,
   ): WorkingEntry[] {
-    return prescription.items.flatMap((item) =>
-      this.buildBaseEntriesForItem(item, anchors),
-    );
+    const phases = [...prescription.medications]
+      .sort((a, b) => a.medicationSnapshot.activePrinciple.localeCompare(b.medicationSnapshot.activePrinciple))
+      .flatMap((medication) =>
+        [...medication.phases]
+          .sort((a, b) => a.phaseOrder - b.phaseOrder)
+          .flatMap((phase) =>
+            this.buildEntriesForPhase(
+              prescription,
+              medication,
+              phase,
+              anchors,
+              this.computePhaseWindow(prescription.startedAt, medication, phase),
+            ),
+          ),
+      );
+
+    return phases;
   }
 
-  private buildBaseEntriesForItem(
-    item: PrescriptionItem,
+  private computePhaseWindow(
+    prescriptionStartDate: string,
+    medication: PatientPrescriptionMedication,
+    phase: PatientPrescriptionPhase,
+  ): { startDate: string; endDate?: string } {
+    const sorted = [...medication.phases].sort((a, b) => a.phaseOrder - b.phaseOrder);
+    let currentStart = prescriptionStartDate;
+    for (const currentPhase of sorted) {
+      const currentEnd = currentPhase.continuousUse
+        ? undefined
+        : calculateEndDate(currentStart, currentPhase.treatmentDays ?? 1);
+      if (currentPhase.phaseOrder === phase.phaseOrder) {
+        return { startDate: currentStart, endDate: currentEnd };
+      }
+      if (!currentEnd) {
+        return { startDate: currentStart, endDate: undefined };
+      }
+      currentStart = shiftDateByDays(currentEnd, 1);
+    }
+    return { startDate: prescriptionStartDate };
+  }
+
+  private buildEntriesForPhase(
+    prescription: PatientPrescription,
+    medication: PatientPrescriptionMedication,
+    phase: PatientPrescriptionPhase,
     anchors: ScheduleAnchors,
+    phaseWindow: { startDate: string; endDate?: string },
   ): WorkingEntry[] {
-    if (item.manualAdjustmentEnabled && item.manualTimes?.length) {
-      return this.buildBaseEntriesFromManualTimes(item);
+    if (phase.manualAdjustmentEnabled && phase.manualTimes?.length) {
+      return phase.manualTimes.map((time, index) =>
+        this.createEntry(
+          prescription,
+          medication,
+          phase,
+          `D${index + 1}`,
+          hhmmToMinutes(time),
+          ClinicalSemanticTag.STANDARD,
+          phaseWindow,
+          'Horário definido manualmente.',
+        ),
+      );
     }
 
-    return this.buildBaseEntriesFromFormula(item, anchors);
-  }
-
-  private buildBaseEntriesFromManualTimes(
-    item: PrescriptionItem,
-  ): WorkingEntry[] {
-    return item.manualTimes!.map((time, index) =>
-      this.createBaseEntry(
-        item,
-        `D${index + 1}`,
-        hhmmToMinutes(time),
-        "Horário definido manualmente.",
-      ),
-    );
-  }
-
-  private buildBaseEntriesFromFormula(
-    item: PrescriptionItem,
-    anchors: ScheduleAnchors,
-  ): WorkingEntry[] {
-    const formula = this.rulesService.getFormula(
-      item.medication.group.code,
-      item.frequency,
+    const frequencyConfig = this.rulesService.getFrequencyConfig(
+      medication.protocolSnapshot,
+      phase.frequency,
     );
 
-    return formula.map((step) =>
-      this.createBaseEntry(
-        item,
+    return frequencyConfig.steps.map((step) =>
+      this.createEntry(
+        prescription,
+        medication,
+        phase,
         step.doseLabel,
-        anchors[step.base] + step.offsetMinutes,
+        anchors[step.anchor] + step.offsetMinutes,
+        step.semanticTag,
+        phaseWindow,
       ),
     );
   }
 
-  private applySpecialRules(
-    entries: WorkingEntry[],
-    anchors: ScheduleAnchors,
-  ): WorkingEntry[] {
-    const normalized = entries.map((entry) => ({ ...entry }));
-
-    this.applyCalciumRule(normalized);
-    this.applySaltRule(normalized);
-    this.applySucralfateRule(normalized, anchors);
-    this.detectResidualConflicts(normalized);
-
-    return normalized.map((entry) => ({
-      ...entry,
-      timeFormatted: minutesToHhmm(entry.timeInMinutes),
-    }));
-  }
-
-  private applyCalciumRule(entries: WorkingEntry[]): void {
-    const calciumEntries = entries.filter(
-      (entry) =>
-        entry.groupCode === GroupCode.GROUP_III_CALC &&
-        entry.status === ScheduleStatus.ACTIVE,
-    );
-    calciumEntries.forEach((calcium) => {
-      const conflicting = entries.find(
-        (entry) =>
-          entry !== calcium &&
-          entry.status === ScheduleStatus.ACTIVE &&
-          entry.timeInMinutes === calcium.timeInMinutes &&
-          entry.interferesWithSalts,
-      );
-
-      if (conflicting) {
-        calcium.timeInMinutes += 60;
-        calcium.note = `Cálcio deslocado 1 hora por interferência com ${conflicting.medicationName}.`;
-      }
-    });
-  }
-
-  private applySaltRule(entries: WorkingEntry[]): void {
-    const saltEntries = entries.filter(
-      (entry) =>
-        entry.groupCode === GroupCode.GROUP_III_SAL &&
-        entry.status === ScheduleStatus.ACTIVE,
-    );
-    saltEntries.forEach((salt) => {
-      const conflict = entries.find(
-        (entry) =>
-          entry !== salt &&
-          entry.status === ScheduleStatus.ACTIVE &&
-          entry.timeInMinutes === salt.timeInMinutes &&
-          entry.interferesWithSalts,
-      );
-      if (conflict) {
-        salt.status = ScheduleStatus.INACTIVE;
-        salt.note = `Dose inativada por conflito com ${conflictingName(conflict)}.`;
-      }
-    });
-  }
-
-  private applySucralfateRule(
-    entries: WorkingEntry[],
-    anchors: ScheduleAnchors,
-  ): void {
-    const sucralfateEntries = entries.filter(
-      (entry) =>
-        entry.groupCode === GroupCode.GROUP_II_SUCRA &&
-        entry.status === ScheduleStatus.ACTIVE,
-    );
-    sucralfateEntries.forEach((entry) => {
-      const currentConflict = entries.some(
-        (other) =>
-          other !== entry &&
-          other.status === ScheduleStatus.ACTIVE &&
-          other.timeInMinutes === entry.timeInMinutes,
-      );
-      if (!currentConflict) return;
-
-      const alternative = anchors[MealAnchor.ALMOCO] + 120;
-      const bedtimeConflict = entries.some(
-        (other) =>
-          other !== entry &&
-          other.status === ScheduleStatus.ACTIVE &&
-          other.timeInMinutes === anchors[MealAnchor.DORMIR],
-      );
-      const alternativeConflict = entries.some(
-        (other) =>
-          other !== entry &&
-          other.status === ScheduleStatus.ACTIVE &&
-          other.timeInMinutes === alternative,
-      );
-
-      if (!alternativeConflict && !bedtimeConflict) {
-        entry.timeInMinutes = alternative;
-        entry.note =
-          "Sucralfato deslocado para almoço + 2h por conflito no horário principal.";
-        return;
-      }
-
-      entry.status = ScheduleStatus.INACTIVE;
-      entry.note =
-        "Sucralfato inativado por conflito no horário principal, alternativo e/ou dormir.";
-    });
-  }
-
-  private detectResidualConflicts(entries: WorkingEntry[]): void {
-    const grouped = new Map<number, WorkingEntry[]>();
-    entries
-      .filter((entry) => entry.status === ScheduleStatus.ACTIVE)
-      .forEach((entry) => {
-        const list = grouped.get(entry.timeInMinutes) ?? [];
-        list.push(entry);
-        grouped.set(entry.timeInMinutes, list);
-      });
-
-    grouped.forEach((list) => {
-      if (list.length <= 1) return;
-      const highPriorityGroups = [
-        GroupCode.GROUP_II,
-        GroupCode.GROUP_II_BIFOS,
-        GroupCode.GROUP_II_SUCRA,
-        GroupCode.GROUP_INSUL_ULTRA,
-        GroupCode.GROUP_INSUL_RAPIDA,
-      ];
-
-      const anchor = list.find((entry) =>
-        highPriorityGroups.includes(entry.groupCode as GroupCode),
-      );
-      list.forEach((entry) => {
-        if (anchor && entry !== anchor) {
-          entry.status = ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED;
-          entry.note = `Conflito com dose prioritária ${anchor.medicationName}; ajuste manual recomendado.`;
-        }
-      });
-    });
-  }
-
-  private createBaseEntry(
-    item: PrescriptionItem,
+  private createEntry(
+    prescription: PatientPrescription,
+    medication: PatientPrescriptionMedication,
+    phase: PatientPrescriptionPhase,
     doseLabel: string,
     timeInMinutes: number,
+    semanticTag: ClinicalSemanticTag,
+    phaseWindow: { startDate: string; endDate?: string },
     note?: string,
   ): WorkingEntry {
+    const administration = this.resolveAdministration(phase, doseLabel);
+
     return {
-      medicationId: item.medication.id,
+      prescriptionMedication: medication,
+      phase,
+      sourceClinicalMedicationId: medication.sourceClinicalMedicationId,
+      sourceProtocolId: medication.sourceProtocolId,
+      phaseOrder: phase.phaseOrder,
       medicationName:
-        item.medication.commercialName || item.medication.activePrinciple,
-      groupCode: item.medication.group.code,
+        medication.medicationSnapshot.commercialName ??
+        medication.medicationSnapshot.activePrinciple,
+      groupCode: medication.protocolSnapshot.groupCode,
+      protocolCode: medication.protocolSnapshot.code,
+      semanticTag,
+      interactionRulesSnapshot: medication.interactionRulesSnapshot,
+      phaseDoseLabel: doseLabel,
       doseLabel,
-      administrationLabel: doseLabel,
-      continuousUse: item.continuousUse,
-      isPrn: false,
+      administrationValue: administration.administrationValue,
+      administrationUnit: administration.administrationUnit,
+      administrationLabel: administration.administrationLabel,
+      recurrenceType: phase.recurrenceType,
+      recurrenceLabel: formatRecurrenceLabel(phase.recurrenceType, phaseWindow.startDate, phaseWindow.endDate, phase),
+      startDate: phaseWindow.startDate,
+      endDate: phaseWindow.endDate,
+      weeklyDay: phase.weeklyDay,
+      monthlyRule: phase.monthlyRule,
+      monthlyDay: phase.monthlyDay,
+      alternateDaysInterval: phase.alternateDaysInterval,
+      continuousUse: phase.continuousUse,
+      isPrn: phase.recurrenceType === TreatmentRecurrence.PRN,
+      prnReason: phase.prnReason,
+      clinicalInstructionLabel:
+        phase.recurrenceType === TreatmentRecurrence.PRN
+          ? phase.prnReason
+            ? `Uso se necessario em caso de ${String(phase.prnReason).toLowerCase()}.`
+            : 'Uso se necessario.'
+          : undefined,
       timeInMinutes,
       timeFormatted: minutesToHhmm(timeInMinutes),
       status: ScheduleStatus.ACTIVE,
       note,
-      prescriptionItem: item,
-      interferesWithSalts: item.medication.interferesWithSalts,
-    };
-  }
-
-  private resolveDoseForEntry(entry: WorkingEntry): WorkingEntry {
-    const administration = this.resolveAdministration(
-      entry.prescriptionItem,
-      entry.doseLabel,
-    );
-
-    return {
-      ...entry,
-      administrationValue: administration.administrationValue,
-      administrationUnit: administration.administrationUnit,
-      administrationLabel: administration.administrationLabel,
-    };
-  }
-
-  private attachClinicalMetadata(
-    entry: WorkingEntry,
-    prescription: Prescription,
-  ): WorkingEntry {
-    return {
-      ...entry,
-      ...buildRecurrenceMetadata(entry.prescriptionItem, prescription),
-    };
-  }
-
-  private attachPrnMetadata(entry: WorkingEntry): WorkingEntry {
-    if (!entry.isPrn) {
-      return entry;
-    }
-
-    return {
-      ...entry,
-      clinicalInstructionLabel: buildClinicalInstructionLabel(
-        entry.recurrenceType ?? TreatmentRecurrence.PRN,
-        entry.prnReason,
-      ),
-      note:
-        entry.note ??
-        "Dose sob demanda; administrar apenas se houver indicacao clinica.",
     };
   }
 
   private resolveAdministration(
-    item: PrescriptionItem,
+    phase: PatientPrescriptionPhase,
     doseLabel: string,
-  ): ResolvedAdministration {
-    const override = this.findDoseOverride(item, doseLabel);
-    const administrationValue = override?.doseValue ?? item.doseValue;
-    const administrationUnit = override?.doseUnit ?? item.doseUnit;
-
+  ): {
+    administrationValue?: string;
+    administrationUnit?: string;
+    administrationLabel: string;
+  } {
+    const override = phase.sameDosePerSchedule
+      ? undefined
+      : phase.perDoseOverrides?.find((item) => item.doseLabel === doseLabel);
+    const administrationValue = override?.doseValue ?? phase.doseValue;
+    const administrationUnit = override?.doseUnit ?? phase.doseUnit;
     if (administrationValue && administrationUnit) {
       return {
         administrationValue,
@@ -354,41 +247,47 @@ export class SchedulingService {
         administrationLabel: `${administrationValue} ${administrationUnit}`,
       };
     }
-
-    const fallbackLabel = administrationValue ?? item.doseAmount ?? doseLabel;
-
     return {
       administrationValue,
       administrationUnit,
-      administrationLabel: fallbackLabel,
+      administrationLabel: administrationValue ?? phase.doseAmount ?? doseLabel,
     };
   }
 
-  private findDoseOverride(
-    item: PrescriptionItem,
-    doseLabel: string,
-  ): PrescriptionItemDoseOverride | undefined {
-    if (item.sameDosePerSchedule || !item.perDoseOverrides?.length) {
-      return undefined;
-    }
-
-    return item.perDoseOverrides.find((override) => override.doseLabel === doseLabel);
+  private applyConflictRules(
+    entries: WorkingEntry[],
+    anchors: ScheduleAnchors,
+  ): WorkingEntry[] {
+    const normalized = entries.map((entry) => ({ ...entry }));
+    this.conflictResolutionService.applySaltRule(normalized);
+    this.conflictResolutionService.applyCalciumRule(normalized);
+    this.conflictResolutionService.applySucralfateRule(normalized, {
+      ACORDAR: anchors[ClinicalAnchor.ACORDAR],
+      CAFE: anchors[ClinicalAnchor.CAFE],
+      ALMOCO: anchors[ClinicalAnchor.ALMOCO],
+      LANCHE: anchors[ClinicalAnchor.LANCHE],
+      JANTAR: anchors[ClinicalAnchor.JANTAR],
+      DORMIR: anchors[ClinicalAnchor.DORMIR],
+    });
+    return normalized;
   }
 
   private sortEntries(entries: WorkingEntry[]): WorkingEntry[] {
     return [...entries].sort(
       (a, b) =>
+        a.phaseOrder - b.phaseOrder ||
         a.timeInMinutes - b.timeInMinutes ||
         a.medicationName.localeCompare(b.medicationName),
     );
   }
 
   private async persistSchedule(
-    prescription: Prescription,
+    prescription: PatientPrescription,
     entries: WorkingEntry[],
     entityManager?: EntityManager,
   ): Promise<ScheduledDose[]> {
-    const scheduledDoseRepository = this.getScheduledDoseRepository(entityManager);
+    const scheduledDoseRepository =
+      entityManager?.getRepository(ScheduledDose) ?? this.scheduledDoseRepository;
 
     await scheduledDoseRepository.delete({
       prescription: { id: prescription.id },
@@ -396,63 +295,17 @@ export class SchedulingService {
 
     return scheduledDoseRepository.save(
       entries.map((entry) =>
-        this.toScheduledDoseEntity(scheduledDoseRepository, prescription, entry),
-      ),
-    );
-  }
-
-  private getScheduledDoseRepository(
-    entityManager?: EntityManager,
-  ): Repository<ScheduledDose> {
-    return entityManager?.getRepository(ScheduledDose) ?? this.scheduledDoseRepository;
-  }
-
-  private toScheduledDoseEntity(
-    scheduledDoseRepository: Repository<ScheduledDose>,
-    prescription: Prescription,
-    entry: WorkingEntry,
-  ): ScheduledDose {
-    return scheduledDoseRepository.create({
-      prescription,
-      prescriptionItem: entry.prescriptionItem,
-      doseLabel: entry.doseLabel,
-      administrationValue: entry.administrationValue,
-      administrationUnit: entry.administrationUnit,
-      administrationLabel: entry.administrationLabel,
-      recurrenceType: entry.recurrenceType,
-      startDate: entry.startDate,
-      endDate: entry.endDate,
-      weeklyDay: entry.weeklyDay,
-      monthlyRule: entry.monthlyRule,
-      monthlyDay: entry.monthlyDay,
-      alternateDaysInterval: entry.alternateDaysInterval,
-      continuousUse: entry.continuousUse,
-      isPrn: entry.isPrn,
-      prnReason: entry.prnReason,
-      clinicalInstructionLabel: entry.clinicalInstructionLabel,
-      timeInMinutes: entry.timeInMinutes,
-      timeFormatted: entry.timeFormatted,
-      status: entry.status,
-      note: entry.note,
-    });
-  }
-
-  private mapSchedulingResult(
-    prescription: Prescription,
-    persisted: ScheduledDose[],
-  ): SchedulingResultDto {
-    return {
-      patientId: prescription.patient.id,
-      prescriptionId: prescription.id,
-      entries: persisted.map((entry) => this.mapScheduleEntry(entry)),
-    };
-  }
-
-  private mapScheduleEntry(entry: ScheduledDose): ScheduleEntryDto {
-    const recurrenceLabel = entry.recurrenceType
-      ? formatClinicalRecurrenceLabel({
+        scheduledDoseRepository.create({
+          prescription,
+          prescriptionMedication: entry.prescriptionMedication,
+          phase: entry.phase,
+          phaseOrder: entry.phaseOrder,
+          doseLabel: entry.doseLabel,
+          administrationValue: entry.administrationValue,
+          administrationUnit: entry.administrationUnit,
+          administrationLabel: entry.administrationLabel,
           recurrenceType: entry.recurrenceType,
-          startDate: entry.startDate ?? "",
+          startDate: entry.startDate,
           endDate: entry.endDate,
           weeklyDay: entry.weeklyDay,
           monthlyRule: entry.monthlyRule,
@@ -462,64 +315,136 @@ export class SchedulingService {
           isPrn: entry.isPrn,
           prnReason: entry.prnReason,
           clinicalInstructionLabel: entry.clinicalInstructionLabel,
-        })
-      : undefined;
+          timeInMinutes: entry.timeInMinutes,
+          timeFormatted: entry.timeFormatted,
+          status: entry.status,
+          note: entry.note,
+        }),
+      ),
+    );
+  }
+
+  private mapSchedulingResult(
+    prescription: PatientPrescription,
+    doses: ScheduledDose[],
+  ): SchedulingResultDto {
+    const medications = [...prescription.medications].sort((a, b) => {
+      const leftName = a.medicationSnapshot.commercialName ?? a.medicationSnapshot.activePrinciple;
+      const rightName = b.medicationSnapshot.commercialName ?? b.medicationSnapshot.activePrinciple;
+      return leftName.localeCompare(rightName) || a.id.localeCompare(b.id);
+    });
 
     return {
-      medicationId: entry.prescriptionItem.medication.id,
-      medicationName:
-        entry.prescriptionItem.medication.commercialName ||
-        entry.prescriptionItem.medication.activePrinciple,
-      groupCode: entry.prescriptionItem.medication.group.code,
-      doseLabel: entry.doseLabel,
-      administrationValue: entry.administrationValue,
-      administrationUnit: entry.administrationUnit,
-      administrationLabel: entry.administrationLabel ?? entry.doseLabel,
-      recurrenceType: entry.recurrenceType,
-      recurrenceLabel,
-      startDate: entry.startDate,
-      endDate: entry.endDate,
-      weeklyDay: entry.weeklyDay,
-      monthlyRule: entry.monthlyRule,
-      monthlyDay: entry.monthlyDay,
-      alternateDaysInterval: entry.alternateDaysInterval,
-      continuousUse: entry.continuousUse,
-      isPrn: entry.isPrn,
-      prnReason: entry.prnReason,
-      clinicalInstructionLabel: entry.clinicalInstructionLabel,
-      timeInMinutes: entry.timeInMinutes,
-      timeFormatted: entry.timeFormatted,
-      status: entry.status,
-      note: entry.note,
+      patientId: prescription.patient.id,
+      prescriptionId: prescription.id,
+      medications: medications.map((medication) => ({
+        prescriptionMedicationId: medication.id,
+        sourceClinicalMedicationId: medication.sourceClinicalMedicationId,
+        sourceProtocolId: medication.sourceProtocolId,
+        medicationName:
+          medication.medicationSnapshot.commercialName ??
+          medication.medicationSnapshot.activePrinciple,
+        activePrinciple: medication.medicationSnapshot.activePrinciple,
+        presentation: medication.medicationSnapshot.presentation,
+        administrationRoute: medication.medicationSnapshot.administrationRoute,
+        usageInstructions: medication.medicationSnapshot.usageInstructions,
+        groupCode: medication.protocolSnapshot.groupCode,
+        protocolCode: medication.protocolSnapshot.code,
+        phases: this.mapPhases(medication, doses),
+      })),
     };
   }
 
-  async getScheduleByPrescription(
-    prescriptionId: string,
-  ): Promise<SchedulingResultDto> {
-    const prescription = await this.prescriptionRepository.findOne({
-      where: { id: prescriptionId },
-      relations: ["patient"],
-    });
+  private mapPhases(
+    medication: PatientPrescriptionMedication,
+    doses: ScheduledDose[],
+  ): ScheduledPhaseDto[] {
+    return [...medication.phases]
+      .sort((a, b) => a.phaseOrder - b.phaseOrder)
+      .map((phase) => {
+        const phaseEntries = doses
+          .filter(
+            (dose) =>
+              dose.prescriptionMedication.id === medication.id &&
+              dose.phase.id === phase.id,
+          )
+          .sort((a, b) => a.timeInMinutes - b.timeInMinutes)
+          .map((dose) => ({
+            doseLabel: dose.doseLabel,
+            administrationValue: dose.administrationValue,
+            administrationUnit: dose.administrationUnit,
+            administrationLabel: dose.administrationLabel ?? dose.doseLabel,
+            recurrenceType: dose.recurrenceType,
+            recurrenceLabel: formatRecurrenceLabel(
+              phase.recurrenceType,
+              dose.startDate,
+              dose.endDate,
+              phase,
+            ),
+            startDate: dose.startDate,
+            endDate: dose.endDate,
+            weeklyDay: dose.weeklyDay,
+            monthlyRule: dose.monthlyRule,
+            monthlyDay: dose.monthlyDay,
+            alternateDaysInterval: dose.alternateDaysInterval,
+            continuousUse: dose.continuousUse,
+            isPrn: dose.isPrn,
+            prnReason: dose.prnReason,
+            clinicalInstructionLabel: dose.clinicalInstructionLabel,
+            timeInMinutes: dose.timeInMinutes,
+            timeFormatted: dose.timeFormatted,
+            status: dose.status,
+            note: dose.note,
+          }));
 
-    if (!prescription) {
-      throw new NotFoundException("Prescrição não encontrada.");
-    }
-
-    const scheduledDoses = await this.scheduledDoseRepository.find({
-      where: { prescription: { id: prescriptionId } },
-      relations: [
-        "prescriptionItem",
-        "prescriptionItem.medication",
-        "prescriptionItem.medication.group",
-      ],
-      order: { timeInMinutes: "ASC" },
-    });
-
-    return this.mapSchedulingResult(prescription, scheduledDoses);
+        return {
+          phaseOrder: phase.phaseOrder,
+          recurrenceType: phase.recurrenceType,
+          recurrenceLabel: phaseEntries[0]?.recurrenceLabel,
+          startDate: phaseEntries[0]?.startDate,
+          endDate: phaseEntries[0]?.endDate,
+          continuousUse: phase.continuousUse,
+          entries: phaseEntries,
+        };
+      });
   }
 }
 
-function conflictingName(entry: WorkingEntry): string {
-  return entry.medicationName;
+function formatRecurrenceLabel(
+  recurrenceType: TreatmentRecurrence,
+  startDate: string | undefined,
+  endDate: string | undefined,
+  phase: PatientPrescriptionPhase,
+): string {
+  if (phase.continuousUse) {
+    return 'Uso continuo';
+  }
+
+  switch (recurrenceType) {
+    case TreatmentRecurrence.WEEKLY:
+      return phase.weeklyDay ? `Semanal em ${phase.weeklyDay}` : 'Semanal';
+    case TreatmentRecurrence.MONTHLY:
+      if (phase.monthlyDay) return `Mensal no dia ${phase.monthlyDay}`;
+      return phase.monthlyRule ? `Mensal: ${phase.monthlyRule}` : 'Mensal';
+    case TreatmentRecurrence.ALTERNATE_DAYS:
+      return `A cada ${phase.alternateDaysInterval ?? 2} dias`;
+    case TreatmentRecurrence.PRN:
+      return phase.prnReason
+        ? `Se necessario: ${String(phase.prnReason).toLowerCase()}`
+        : 'Se necessario';
+    case TreatmentRecurrence.DAILY:
+    default:
+      if (!startDate) return 'Diario';
+      return endDate ? 'Diario' : phase.continuousUse ? 'Uso continuo' : 'Diario';
+  }
+}
+
+function shiftDateByDays(dateString: string, days: number): string {
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  const resultYear = String(date.getFullYear());
+  const resultMonth = String(date.getMonth() + 1).padStart(2, '0');
+  const resultDay = String(date.getDate()).padStart(2, '0');
+  return `${resultYear}-${resultMonth}-${resultDay}`;
 }

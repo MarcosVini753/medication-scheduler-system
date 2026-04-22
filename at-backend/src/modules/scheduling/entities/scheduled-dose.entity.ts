@@ -1,19 +1,26 @@
 import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { PrnReason } from '../../../common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
-import { Prescription } from '../../prescriptions/entities/prescription.entity';
-import { PrescriptionItem } from '../../prescriptions/entities/prescription-item.entity';
+import { PatientPrescriptionMedication } from '../../patient-prescriptions/entities/patient-prescription-medication.entity';
+import { PatientPrescriptionPhase } from '../../patient-prescriptions/entities/patient-prescription-phase.entity';
+import { PatientPrescription } from '../../patient-prescriptions/entities/patient-prescription.entity';
 
 @Entity('scheduled_doses')
 export class ScheduledDose {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => Prescription, { onDelete: 'CASCADE' })
-  prescription: Prescription;
+  @ManyToOne(() => PatientPrescription, { onDelete: 'CASCADE' })
+  prescription: PatientPrescription;
 
-  @ManyToOne(() => PrescriptionItem, (item) => item.schedules, { eager: true, onDelete: 'CASCADE' })
-  prescriptionItem: PrescriptionItem;
+  @ManyToOne(() => PatientPrescriptionMedication, { eager: true, onDelete: 'CASCADE' })
+  prescriptionMedication: PatientPrescriptionMedication;
+
+  @ManyToOne(() => PatientPrescriptionPhase, { eager: true, onDelete: 'CASCADE' })
+  phase: PatientPrescriptionPhase;
+
+  @Column({ type: 'int' })
+  phaseOrder: number;
 
   @Column()
   doseLabel: string;

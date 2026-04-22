@@ -2,9 +2,6 @@ import { PrnReason } from '../../../common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
 
 export interface ScheduleEntryDto {
-  medicationId: string;
-  medicationName: string;
-  groupCode: string;
   doseLabel: string;
   administrationValue?: string;
   administrationUnit?: string;
@@ -27,8 +24,32 @@ export interface ScheduleEntryDto {
   note?: string;
 }
 
+export interface ScheduledPhaseDto {
+  phaseOrder: number;
+  recurrenceType?: TreatmentRecurrence;
+  recurrenceLabel?: string;
+  startDate?: string;
+  endDate?: string;
+  continuousUse: boolean;
+  entries: ScheduleEntryDto[];
+}
+
+export interface ScheduledMedicationDto {
+  prescriptionMedicationId: string;
+  sourceClinicalMedicationId: string;
+  sourceProtocolId: string;
+  medicationName: string;
+  activePrinciple: string;
+  presentation: string;
+  administrationRoute: string;
+  usageInstructions: string;
+  groupCode: string;
+  protocolCode: string;
+  phases: ScheduledPhaseDto[];
+}
+
 export interface SchedulingResultDto {
   patientId: string;
   prescriptionId: string;
-  entries: ScheduleEntryDto[];
+  medications: ScheduledMedicationDto[];
 }

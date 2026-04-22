@@ -1,0 +1,134 @@
+import {
+  registerDecorator,
+  ValidationArguments,
+  ValidationOptions,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+} from 'class-validator';
+import { TreatmentRecurrence } from '../../../common/enums/treatment-recurrence.enum';
+
+type PhaseLike = {
+  phaseOrder?: number;
+  frequency?: number;
+  sameDosePerSchedule?: boolean;
+  perDoseOverrides?: { doseLabel?: string }[];
+  recurrenceType?: TreatmentRecurrence;
+  alternateDaysInterval?: number;
+  weeklyDay?: string;
+  monthlyRule?: string;
+  monthlyDay?: number;
+  treatmentDays?: number;
+  continuousUse?: boolean;
+  manualAdjustmentEnabled?: boolean;
+  manualTimes?: string[];
+};
+
+const VALID_WEEKLY_DAYS = new Set([
+  'SEGUNDA',
+  'TERCA',
+  'QUARTA',
+  'QUINTA',
+  'SEXTA',
+  'SABADO',
+  'DOMINGO',
+]);
+
+@ValidatorConstraint({ name: 'PatientPrescriptionPhaseValid', async: false })
+export class PatientPrescriptionPhaseValidator
+  implements ValidatorConstraintInterface
+{
+  validate(_: unknown, args: ValidationArguments): boolean {
+    return !getPhaseValidationError(args.object as PhaseLike);
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    return (
+      getPhaseValidationError(args.object as PhaseLike) ??
+      'Fase terapêutica inválida.'
+    );
+  }
+}
+
+export function IsPatientPrescriptionPhaseValid(
+  validationOptions?: ValidationOptions,
+) {
+  return (object: object, propertyName: string) => {
+    registerDecorator({
+      target: object.constructor,
+      propertyName,
+      options: validationOptions,
+      validator: PatientPrescriptionPhaseValidator,
+    });
+  };
+}
+
+function getPhaseValidationError(phase: PhaseLike): string | undefined {
+  if ((phase.phaseOrder ?? 0) < 1) {
+    return 'phaseOrder deve iniciar em 1.';
+  }
+
+  if (phase.continuousUse && phase.treatmentDays !== undefined) {
+    return 'continuousUse nao pode ser combinado com treatmentDays.';
+  }
+
+  if (
+    !phase.continuousUse &&
+    phase.recurrenceType !== TreatmentRecurrence.PRN &&
+    phase.treatmentDays === undefined
+  ) {
+    return 'treatmentDays e obrigatorio quando a fase nao for continua e nem PRN.';
+  }
+
+  if (
+    phase.recurrenceType === TreatmentRecurrence.WEEKLY &&
+    (!phase.weeklyDay ||
+      !VALID_WEEKLY_DAYS.has(phase.weeklyDay.trim().toUpperCase()))
+  ) {
+    return 'weeklyDay deve ser um dia valido da semana.';
+  }
+
+  if (
+    phase.recurrenceType === TreatmentRecurrence.MONTHLY &&
+    phase.monthlyDay === undefined &&
+    !phase.monthlyRule
+  ) {
+    return 'monthlyDay ou monthlyRule sao obrigatorios para recorrencia MONTHLY.';
+  }
+
+  if (
+    phase.recurrenceType === TreatmentRecurrence.ALTERNATE_DAYS &&
+    phase.alternateDaysInterval === undefined
+  ) {
+    return 'alternateDaysInterval e obrigatorio para recorrencia ALTERNATE_DAYS.';
+  }
+
+  if (
+    phase.sameDosePerSchedule === false &&
+    (!phase.perDoseOverrides || phase.perDoseOverrides.length !== phase.frequency)
+  ) {
+    return 'perDoseOverrides deve cobrir exatamente a quantidade de doses da fase.';
+  }
+
+  if (
+    phase.sameDosePerSchedule === false &&
+    phase.perDoseOverrides &&
+    !coversAllDoseLabels(phase.perDoseOverrides, phase.frequency ?? 0)
+  ) {
+    return 'perDoseOverrides deve conter D1..Dn sem repeticao.';
+  }
+
+  if (phase.manualAdjustmentEnabled && (!phase.manualTimes || phase.manualTimes.length === 0)) {
+    return 'manualTimes e obrigatorio quando manualAdjustmentEnabled for true.';
+  }
+
+  return undefined;
+}
+
+function coversAllDoseLabels(
+  perDoseOverrides: { doseLabel?: string }[],
+  frequency: number,
+): boolean {
+  const expected = Array.from({ length: frequency }, (_, index) => `D${index + 1}`);
+  const actual = new Set(perDoseOverrides.map((override) => override.doseLabel));
+  return expected.every((label) => actual.has(label));
+}
