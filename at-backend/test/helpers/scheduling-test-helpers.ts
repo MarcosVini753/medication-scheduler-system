@@ -202,6 +202,24 @@ function buildDefaultFrequencies(groupCode: string) {
         ],
       },
     ],
+    [GroupCode.GROUP_I_SIME]: [
+      { frequency: 1, steps: [step("D1", ClinicalAnchor.CAFE, 60)] },
+      {
+        frequency: 2,
+        steps: [
+          step("D1", ClinicalAnchor.CAFE, 60),
+          step("D2", ClinicalAnchor.JANTAR, 60),
+        ],
+      },
+      {
+        frequency: 3,
+        steps: [
+          step("D1", ClinicalAnchor.CAFE, 60),
+          step("D2", ClinicalAnchor.LANCHE, 60),
+          step("D3", ClinicalAnchor.JANTAR, 60),
+        ],
+      },
+    ],
     [GroupCode.GROUP_II]: [
       { frequency: 1, steps: [step("D1", ClinicalAnchor.ACORDAR, 0)] },
       {

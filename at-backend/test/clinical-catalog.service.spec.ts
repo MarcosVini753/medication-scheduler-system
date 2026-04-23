@@ -137,6 +137,7 @@ describe('ClinicalCatalogService', () => {
     const { service, groupRepository, medicationRepository } = createService();
     const allGroups = [
       GroupCode.GROUP_I,
+      GroupCode.GROUP_I_SIME,
       GroupCode.GROUP_II,
       GroupCode.GROUP_II_BIFOS,
       GroupCode.GROUP_II_SUCRA,
@@ -171,9 +172,10 @@ describe('ClinicalCatalogService', () => {
     const savedGroups = groupRepository.save.mock.calls[0][0];
     expect(Array.isArray(savedGroups)).toBe(true);
     expect(savedGroups.length).toBeGreaterThan(0);
-    expect(savedGroups).toEqual(
+      expect(savedGroups).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: GroupCode.GROUP_I }),
+        expect.objectContaining({ code: GroupCode.GROUP_I_SIME }),
         expect.objectContaining({ code: GroupCode.GROUP_II }),
         expect.objectContaining({ code: GroupCode.GROUP_III_LAX }),
         expect.objectContaining({ code: GroupCode.GROUP_III_ESTAT }),
@@ -204,6 +206,19 @@ describe('ClinicalCatalogService', () => {
               code: 'GROUP_I_STANDARD',
               frequencies: expect.arrayContaining([
                 expect.objectContaining({ frequency: 1 }),
+              ]),
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'SIMETICONA',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'GROUP_I_SIME_STANDARD',
+              frequencies: expect.arrayContaining([
+                expect.objectContaining({ frequency: 1 }),
+                expect.objectContaining({ frequency: 2 }),
+                expect.objectContaining({ frequency: 3 }),
               ]),
             }),
           ]),
@@ -311,6 +326,7 @@ describe('ClinicalCatalogService', () => {
     const protocolsByCode = new Map(protocols.map((protocol) => [protocol.code, protocol]));
 
     expect(protocolsByCode.get('GROUP_II_WAKE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3]);
+    expect(protocolsByCode.get('GROUP_I_SIME_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3]);
     expect(protocolsByCode.get('GROUP_II_BEDTIME')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('GROUP_II_LUNCH_BEFORE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('GROUP_II_LUNCH_AFTER')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);

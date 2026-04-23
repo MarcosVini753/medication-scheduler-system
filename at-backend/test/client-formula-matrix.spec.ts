@@ -132,6 +132,21 @@ describe('Client requirement formula matrix', () => {
     ]);
   });
 
+  it('matches GROUP_I_SIME formulas from the client document for frequencies 1..3', async () => {
+    await expectFormula(GroupCode.GROUP_I_SIME, 1, [
+      { doseLabel: 'D1', timeFormatted: '08:00', anchor: ClinicalAnchor.CAFE, offsetMinutes: 60 },
+    ]);
+    await expectFormula(GroupCode.GROUP_I_SIME, 2, [
+      { doseLabel: 'D1', timeFormatted: '08:00', anchor: ClinicalAnchor.CAFE, offsetMinutes: 60 },
+      { doseLabel: 'D2', timeFormatted: '20:00', anchor: ClinicalAnchor.JANTAR, offsetMinutes: 60 },
+    ]);
+    await expectFormula(GroupCode.GROUP_I_SIME, 3, [
+      { doseLabel: 'D1', timeFormatted: '08:00', anchor: ClinicalAnchor.CAFE, offsetMinutes: 60 },
+      { doseLabel: 'D2', timeFormatted: '17:00', anchor: ClinicalAnchor.LANCHE, offsetMinutes: 60 },
+      { doseLabel: 'D3', timeFormatted: '20:00', anchor: ClinicalAnchor.JANTAR, offsetMinutes: 60 },
+    ]);
+  });
+
   it('matches fasting, metformin, salts, sucralfate, calcium and sedative formulas', async () => {
     await expectFormula(GroupCode.GROUP_II_BIFOS, 1, [
       { doseLabel: 'D1', timeFormatted: '05:00', anchor: ClinicalAnchor.ACORDAR, offsetMinutes: -60 },

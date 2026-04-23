@@ -90,6 +90,11 @@ export class ClinicalCatalogService {
         description: 'Medicamentos independentes das refeições.',
       },
       {
+        code: GroupCode.GROUP_I_SIME,
+        name: 'Grupo I Sime',
+        description: 'Medicamentos administrados 1 hora após as refeições conforme documento.',
+      },
+      {
         code: GroupCode.GROUP_II,
         name: 'Grupo II',
         description: 'Medicamentos em jejum ou em horários específicos pré-refeição.',
@@ -376,6 +381,76 @@ export class ClinicalCatalogService {
                 windowMinutes: 420,
                 priority: 70,
                 applicableSemanticTags: [ClinicalSemanticTag.STANDARD],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'SIMETICONA',
+        activePrinciple: 'Simeticona 75 mg/ml',
+        presentation: 'Frasco 15 ml',
+        pharmaceuticalForm: 'Solucao oral',
+        administrationRoute: 'VO',
+        usageInstructions: 'Administrar conforme prescricao, 1 hora apos as refeicoes.',
+        protocols: [
+          {
+            code: 'GROUP_I_SIME_STANDARD',
+            name: 'Grupo I Sime padrao',
+            description: 'Protocolo padrão 1 hora após refeições.',
+            groupCode: GroupCode.GROUP_I_SIME,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                label: '1x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 60,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                label: '2x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 60,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 60,
+                  },
+                ],
+              },
+              {
+                frequency: 3,
+                label: '3x ao dia',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 60,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.LANCHE,
+                    offsetMinutes: 60,
+                  },
+                  {
+                    doseLabel: 'D3',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 60,
+                  },
+                ],
               },
             ],
           },

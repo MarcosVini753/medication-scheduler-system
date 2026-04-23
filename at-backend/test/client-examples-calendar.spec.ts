@@ -234,6 +234,38 @@ describe('Client document calendar examples', () => {
     expect(item(result, 'CONTRAVE', 4)).toMatchObject({ inicio: '13/03/2026', termino: null, recorrenciaTexto: 'Uso contínuo' });
   });
 
+  it('SIMETICONA renders GROUP_I_SIME in the final calendar contract with post-meal times', async () => {
+    const { service } = createSchedulingService({ routine: standardRoutine });
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: 'SIMETICONA',
+          activePrinciple: 'Simeticona 75 mg/ml',
+          presentation: 'Frasco 15 ml',
+          pharmaceuticalForm: 'Solução oral',
+          administrationRoute: 'Via oral',
+          usageInstructions: 'Administrar conforme prescrição.',
+        },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I_SIME),
+        phases: [
+          buildPhase({
+            frequency: 3,
+            doseValue: '15',
+            doseUnit: DoseUnit.ML,
+            treatmentDays: 7,
+          }),
+        ],
+      }),
+    ]);
+
+    expect(item(result, 'SIMETICONA')).toMatchObject({
+      via: 'Via oral',
+      recorrenciaTexto: 'Diário',
+      modoUso: expect.stringContaining('Administrar conforme prescrição.'),
+    });
+    expect(doseTimes(result, 'SIMETICONA')).toEqual(['08:00', '17:00', '20:00']);
+  });
+
   it('GASTROGEL and SUCRAFILM follow the conflict examples for salts and sucralfate', async () => {
     const { service } = createSchedulingService({ routine: standardRoutine });
     const result = await buildScheduleResult(service, [
