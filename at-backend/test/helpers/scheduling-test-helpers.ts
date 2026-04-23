@@ -522,6 +522,14 @@ function buildDefaultFrequencies(groupCode: string, protocolCode?: string) {
           step("D2", ClinicalAnchor.JANTAR, 0),
         ],
       },
+      {
+        frequency: 3,
+        steps: [
+          step("D1", ClinicalAnchor.CAFE, 0),
+          step("D2", ClinicalAnchor.ALMOCO, 0),
+          step("D3", ClinicalAnchor.JANTAR, 0),
+        ],
+      },
     ],
     [GroupCode.GROUP_DELTA]: [
       { frequency: 1, steps: [step("D1", ClinicalAnchor.ACORDAR, 0)] },

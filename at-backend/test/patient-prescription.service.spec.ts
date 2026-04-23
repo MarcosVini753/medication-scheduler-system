@@ -410,6 +410,146 @@ describe('PatientPrescriptionService', () => {
     });
   });
 
+  it('accepts generic GROUP_III default protocol with frequency 3', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+    const groupIIIFrequency3 = {
+      frequency: 3,
+      allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+      steps: [
+        {
+          doseLabel: 'D1',
+          anchor: ClinicalAnchor.CAFE,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+        {
+          doseLabel: 'D2',
+          anchor: ClinicalAnchor.ALMOCO,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+        {
+          doseLabel: 'D3',
+          anchor: ClinicalAnchor.JANTAR,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+      ],
+    };
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      id: 'clinical-group-iii',
+      commercialName: 'MEDICAMENTO GRUPO III',
+      activePrinciple: 'Fármaco relacionado às refeições',
+      presentation: 'Comprimido',
+      administrationRoute: 'VO',
+      usageInstructions: 'Administrar junto às refeições conforme a família clínica selecionada.',
+      protocols: [
+        {
+          id: 'protocol-group-iii',
+          code: 'GROUP_III_CAFE_STANDARD',
+          name: 'Grupo III genérico - Café',
+          description:
+            'Protocolo genérico do Grupo III: 1 tomada no café; 2 tomadas no café e jantar; 3 tomadas no café, almoço e jantar.',
+          priority: 0,
+          isDefault: true,
+          group: { code: GroupCode.GROUP_III },
+          frequencies: [groupIIIFrequency3],
+          interactionRules: [],
+        },
+      ],
+    });
+    prescriptionRepository.findOne.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      patient: { id: 'patient-1' },
+      medications: [
+        {
+          id: 'prescription-medication-1',
+          sourceClinicalMedicationId: 'clinical-group-iii',
+          sourceProtocolId: 'protocol-group-iii',
+          medicationSnapshot: {
+            id: 'clinical-group-iii',
+            commercialName: 'MEDICAMENTO GRUPO III',
+            activePrinciple: 'Fármaco relacionado às refeições',
+            presentation: 'Comprimido',
+            administrationRoute: 'VO',
+            usageInstructions: 'Administrar junto às refeições conforme a família clínica selecionada.',
+          },
+          protocolSnapshot: {
+            id: 'protocol-group-iii',
+            code: 'GROUP_III_CAFE_STANDARD',
+            name: 'Grupo III genérico - Café',
+            description:
+              'Protocolo genérico do Grupo III: 1 tomada no café; 2 tomadas no café e jantar; 3 tomadas no café, almoço e jantar.',
+            groupCode: GroupCode.GROUP_III,
+            priority: 0,
+            isDefault: true,
+            frequencies: [groupIIIFrequency3],
+          },
+          interactionRulesSnapshot: [],
+          phases: [
+            {
+              id: 'phase-1',
+              phaseOrder: 1,
+              frequency: 3,
+              sameDosePerSchedule: true,
+              doseAmount: '1 COMP',
+              doseValue: '1',
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 10,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            },
+          ],
+        },
+      ],
+    }));
+
+    await service.create({
+      patientId: 'patient-1',
+      startedAt: '2026-04-21',
+      medications: [
+        {
+          clinicalMedicationId: 'clinical-group-iii',
+          protocolId: 'protocol-group-iii',
+          phases: [
+            {
+              phaseOrder: 1,
+              frequency: 3,
+              sameDosePerSchedule: true,
+              doseAmount: '1 COMP',
+              doseValue: '1',
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 10,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            } as never,
+          ],
+        },
+      ],
+    });
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+    expect(schedulingService.buildAndPersistSchedule.mock.calls[0][0].medications[0]).toMatchObject({
+      medicationSnapshot: {
+        commercialName: 'MEDICAMENTO GRUPO III',
+      },
+      protocolSnapshot: {
+        code: 'GROUP_III_CAFE_STANDARD',
+        groupCode: GroupCode.GROUP_III,
+      },
+      phases: [
+        expect.objectContaining({
+          frequency: 3,
+          recurrenceType: TreatmentRecurrence.DAILY,
+        }),
+      ],
+    });
+  });
+
   it('keeps prescription snapshots stable even if the clinical catalog object is mutated later', async () => {
     const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
       createService();

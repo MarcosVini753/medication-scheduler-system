@@ -643,6 +643,116 @@ export class ClinicalCatalogService {
         ],
       },
       {
+        commercialName: 'MEDICAMENTO GRUPO III',
+        activePrinciple: 'Fármaco relacionado às refeições',
+        presentation: 'Comprimido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Administrar junto às refeições conforme a família clínica selecionada.',
+        protocols: [
+          {
+            code: 'GROUP_III_CAFE_STANDARD',
+            name: 'Grupo III genérico - Café',
+            description:
+              'Protocolo genérico do Grupo III: 1 tomada no café; 2 tomadas no café e jantar; 3 tomadas no café, almoço e jantar.',
+            groupCode: GroupCode.GROUP_III,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 3,
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.ALMOCO,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D3',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            code: 'GROUP_III_ALMOCO_STANDARD',
+            name: 'Grupo III genérico - Almoço',
+            description:
+              'Alternativa do Grupo III genérico para 1 tomada no almoço.',
+            groupCode: GroupCode.GROUP_III,
+            isDefault: false,
+            frequencies: [
+              {
+                frequency: 1,
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ALMOCO,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            code: 'GROUP_III_JANTAR_STANDARD',
+            name: 'Grupo III genérico - Jantar',
+            description:
+              'Alternativa do Grupo III genérico para 1 tomada no jantar.',
+            groupCode: GroupCode.GROUP_III,
+            isDefault: false,
+            frequencies: [
+              {
+                frequency: 1,
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
         commercialName: 'GLIFAGE',
         activePrinciple: 'Metformina',
         presentation: 'Comprimido revestido',

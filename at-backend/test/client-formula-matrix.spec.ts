@@ -174,6 +174,21 @@ describe('Client requirement formula matrix', () => {
     ]);
   });
 
+  it('matches generic GROUP_III formulas for meal-related medication', async () => {
+    await expectFormula(GroupCode.GROUP_III, 1, [
+      { doseLabel: 'D1', timeFormatted: '07:00', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 },
+    ]);
+    await expectFormula(GroupCode.GROUP_III, 2, [
+      { doseLabel: 'D1', timeFormatted: '07:00', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 },
+      { doseLabel: 'D2', timeFormatted: '19:00', anchor: ClinicalAnchor.JANTAR, offsetMinutes: 0 },
+    ]);
+    await expectFormula(GroupCode.GROUP_III, 3, [
+      { doseLabel: 'D1', timeFormatted: '07:00', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 },
+      { doseLabel: 'D2', timeFormatted: '13:00', anchor: ClinicalAnchor.ALMOCO, offsetMinutes: 0 },
+      { doseLabel: 'D3', timeFormatted: '19:00', anchor: ClinicalAnchor.JANTAR, offsetMinutes: 0 },
+    ]);
+  });
+
   it('matches the documented GROUP_II default protocol families', async () => {
     await expectProtocolFormula(
       'GROUP_II_WAKE',

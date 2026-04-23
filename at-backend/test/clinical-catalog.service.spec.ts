@@ -234,6 +234,23 @@ describe('ClinicalCatalogService', () => {
           ]),
         }),
         expect.objectContaining({
+          commercialName: 'MEDICAMENTO GRUPO III',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'GROUP_III_CAFE_STANDARD',
+              isDefault: true,
+            }),
+            expect.objectContaining({
+              code: 'GROUP_III_ALMOCO_STANDARD',
+              isDefault: false,
+            }),
+            expect.objectContaining({
+              code: 'GROUP_III_JANTAR_STANDARD',
+              isDefault: false,
+            }),
+          ]),
+        }),
+        expect.objectContaining({
           commercialName: 'BISACODIL',
           protocols: expect.arrayContaining([
             expect.objectContaining({
@@ -423,6 +440,62 @@ describe('ClinicalCatalogService', () => {
     expect(protocolsByCode.get('GROUP_II_BEDTIME')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('GROUP_II_LUNCH_BEFORE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('GROUP_II_LUNCH_AFTER')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    const groupIIICafeProtocol = protocolsByCode.get('GROUP_III_CAFE_STANDARD');
+    expect(groupIIICafeProtocol).toMatchObject({
+      group: expect.objectContaining({ code: GroupCode.GROUP_III }),
+      isDefault: true,
+      description: expect.stringContaining('3 tomadas no café, almoço e jantar'),
+    });
+    expect(groupIIICafeProtocol?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3]);
+    expect(groupIIICafeProtocol?.frequencies.find((frequency) => frequency.frequency === 3)?.steps).toEqual([
+      expect.objectContaining({
+        doseLabel: 'D1',
+        anchor: ClinicalAnchor.CAFE,
+        offsetMinutes: 0,
+      }),
+      expect.objectContaining({
+        doseLabel: 'D2',
+        anchor: ClinicalAnchor.ALMOCO,
+        offsetMinutes: 0,
+      }),
+      expect.objectContaining({
+        doseLabel: 'D3',
+        anchor: ClinicalAnchor.JANTAR,
+        offsetMinutes: 0,
+      }),
+    ]);
+    expect(protocolsByCode.get('GROUP_III_ALMOCO_STANDARD')).toMatchObject({
+      isDefault: false,
+      description: expect.stringContaining('1 tomada no almoço'),
+      frequencies: [
+        expect.objectContaining({
+          frequency: 1,
+          steps: [
+            expect.objectContaining({
+              doseLabel: 'D1',
+              anchor: ClinicalAnchor.ALMOCO,
+              offsetMinutes: 0,
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(protocolsByCode.get('GROUP_III_JANTAR_STANDARD')).toMatchObject({
+      isDefault: false,
+      description: expect.stringContaining('1 tomada no jantar'),
+      frequencies: [
+        expect.objectContaining({
+          frequency: 1,
+          steps: [
+            expect.objectContaining({
+              doseLabel: 'D1',
+              anchor: ClinicalAnchor.JANTAR,
+              offsetMinutes: 0,
+            }),
+          ],
+        }),
+      ],
+    });
     expect(protocolsByCode.get('GROUP_III_LAX_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
     expect(protocolsByCode.get('GROUP_III_ESTAT_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('GROUP_III_DIU_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
