@@ -24,7 +24,9 @@ export function buildTypeOrmOptions(configService: ConfigService) {
     port: Number(configService.get<string>('DB_PORT', '5432')),
     username: configService.get<string>('DB_USERNAME'),
     password: configService.get<string>('DB_PASSWORD'),
-    database: configService.get<string>('DB_DATABASE'),
+    database:
+      configService.get<string>('DB_NAME') ??
+      configService.get<string>('DB_DATABASE'),
     autoLoadEntities: true,
     synchronize: dbSyncEnabled,
     logging: isTrue(configService.get<string>('DB_LOGGING', 'false'))
