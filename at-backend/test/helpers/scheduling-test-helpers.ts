@@ -36,6 +36,7 @@ export interface RoutineFixture {
   lanche: string;
   jantar: string;
   dormir: string;
+  banho?: string | null;
 }
 
 interface CreateServiceOptions {
@@ -145,20 +146,21 @@ export function buildProtocolSnapshot(
   groupCode: string,
   overrides: Partial<ClinicalProtocolSnapshot> = {},
 ): ClinicalProtocolSnapshot {
+  const code = overrides.code ?? `${groupCode}_DEFAULT`;
   return {
     id: nextId("protocol"),
-    code: `${groupCode}_DEFAULT`,
+    code,
     name: `${groupCode} default`,
     description: "Protocolo de teste",
     groupCode,
     priority: 0,
     isDefault: true,
-    frequencies: buildDefaultFrequencies(groupCode),
+    frequencies: buildDefaultFrequencies(groupCode, code),
     ...overrides,
   };
 }
 
-function buildDefaultFrequencies(groupCode: string) {
+function buildDefaultFrequencies(groupCode: string, protocolCode?: string) {
   const step = (
     doseLabel: string,
     anchor: ClinicalAnchor,
@@ -170,6 +172,55 @@ function buildDefaultFrequencies(groupCode: string) {
     offsetMinutes,
     semanticTag,
   });
+
+  const deltaRecipes: Record<string, Array<{ frequency: number; steps: ProtocolStepSnapshot[] }>> = {
+    DELTA_OCULAR_BEDTIME: [
+      { frequency: 1, steps: [step("D1", ClinicalAnchor.DORMIR, 0)] },
+    ],
+    DELTA_OTICO_12H: [
+      {
+        frequency: 2,
+        steps: [
+          step("D1", ClinicalAnchor.ACORDAR, 0),
+          step("D2", ClinicalAnchor.ACORDAR, 720),
+        ],
+      },
+    ],
+    DELTA_METRONIDAZOL_VAGINAL: [
+      {
+        frequency: 1,
+        steps: [
+          step(
+            "D1",
+            ClinicalAnchor.DORMIR,
+            -20,
+            ClinicalSemanticTag.BEDTIME_EQUIVALENT,
+          ),
+        ],
+      },
+    ],
+    DELTA_TOPICO_APOS_BANHO: [
+      { frequency: 1, steps: [step("D1", ClinicalAnchor.APOS_BANHO, 0)] },
+    ],
+    DELTA_INTRANASAL_WAKE: [
+      { frequency: 1, steps: [step("D1", ClinicalAnchor.ACORDAR, 0)] },
+    ],
+    DELTA_RETAL_BEDTIME: [
+      { frequency: 1, steps: [step("D1", ClinicalAnchor.DORMIR, 0)] },
+    ],
+    DELTA_SUBLINGUAL_WAKE: [
+      { frequency: 1, steps: [step("D1", ClinicalAnchor.ACORDAR, 0)] },
+    ],
+    DELTA_INALATORIO_12H: [
+      {
+        frequency: 2,
+        steps: [
+          step("D1", ClinicalAnchor.ACORDAR, 0),
+          step("D2", ClinicalAnchor.ACORDAR, 720),
+        ],
+      },
+    ],
+  };
 
   const recipes: Record<
     string,
@@ -476,6 +527,10 @@ function buildDefaultFrequencies(groupCode: string) {
       { frequency: 1, steps: [step("D1", ClinicalAnchor.ACORDAR, 0)] },
     ],
   };
+
+  if (groupCode === GroupCode.GROUP_DELTA && protocolCode && deltaRecipes[protocolCode]) {
+    return deltaRecipes[protocolCode];
+  }
 
   return (
     recipes[groupCode] ?? [

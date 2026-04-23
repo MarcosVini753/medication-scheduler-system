@@ -31,6 +31,7 @@ export interface CalendarRoutineDto {
   lanche: string;
   jantar: string;
   dormir: string;
+  banho: string | null;
 }
 
 export interface CalendarScheduleDoseDto {

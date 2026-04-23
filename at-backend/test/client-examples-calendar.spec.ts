@@ -52,6 +52,40 @@ describe('Client document calendar examples', () => {
     return item(result, medicationName).doses.map((dose) => dose.horario);
   }
 
+  function buildDeltaMedication(
+    commercialName: string,
+    protocolCode: string,
+    frequency: number,
+    options: {
+      activePrinciple: string;
+      administrationRoute: string;
+      doseValue?: string;
+      doseUnit?: DoseUnit;
+      doseAmount?: string;
+    },
+  ) {
+    return buildPrescriptionMedication({
+      medicationSnapshot: {
+        commercialName,
+        activePrinciple: options.activePrinciple,
+        administrationRoute: options.administrationRoute,
+        usageInstructions: 'Administrar conforme prescrição.',
+      },
+      protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_DELTA, {
+        code: protocolCode,
+      }),
+      phases: [
+        buildPhase({
+          frequency,
+          doseAmount: options.doseAmount,
+          doseValue: options.doseValue,
+          doseUnit: options.doseUnit,
+          treatmentDays: 7,
+        }),
+      ],
+    });
+  }
+
   it('GANSULIN R renders the rapid-insulin calendar at 30 minutes before meals with glycemia scale text', async () => {
     const { service } = createSchedulingService({ routine: standardRoutine });
     const result = await buildScheduleResult(service, [
@@ -264,6 +298,97 @@ describe('Client document calendar examples', () => {
       modoUso: expect.stringContaining('Administrar conforme prescrição.'),
     });
     expect(doseTimes(result, 'SIMETICONA')).toEqual(['08:00', '17:00', '20:00']);
+  });
+
+  it('Grupo Delta default protocols render each non-oral family without manual snapshots', async () => {
+    const { service } = createSchedulingService({
+      routine: buildRoutine({ ...standardRoutine, banho: '08:30' }),
+    });
+    const result = await buildScheduleResult(service, [
+      buildDeltaMedication('XALACOM', 'DELTA_OCULAR_BEDTIME', 1, {
+        activePrinciple: 'Latanoprosta + Timolol',
+        administrationRoute: 'Via ocular',
+        doseValue: '1',
+        doseUnit: DoseUnit.GOTAS,
+      }),
+      buildDeltaMedication('OTOCIRIAX', 'DELTA_OTICO_12H', 2, {
+        activePrinciple: 'Ciprofloxacino + Hidrocortisona',
+        administrationRoute: 'Via otológica',
+        doseValue: '3',
+        doseUnit: DoseUnit.GOTAS,
+      }),
+      buildDeltaMedication('METRONIDAZOL', 'DELTA_METRONIDAZOL_VAGINAL', 1, {
+        activePrinciple: 'Metronidazol 100mg/g',
+        administrationRoute: 'VIA VAGINAL',
+        doseValue: '1',
+        doseUnit: DoseUnit.APLICADOR,
+      }),
+      buildDeltaMedication('CETOCONAZOL', 'DELTA_TOPICO_APOS_BANHO', 1, {
+        activePrinciple: 'Cetoconazol 20mg/g',
+        administrationRoute: 'USO TOPICO',
+        doseAmount: 'AREA AFETADA',
+      }),
+      buildDeltaMedication('BUDESONIDA NASAL', 'DELTA_INTRANASAL_WAKE', 1, {
+        activePrinciple: 'Budesonida',
+        administrationRoute: 'Via intra nasal',
+        doseValue: '1',
+        doseUnit: DoseUnit.JATOS,
+      }),
+      buildDeltaMedication('SUPOSITORIO DE GLICERINA', 'DELTA_RETAL_BEDTIME', 1, {
+        activePrinciple: 'Glicerina',
+        administrationRoute: 'Via retal',
+        doseValue: '1',
+        doseUnit: DoseUnit.SUPOSITORIO,
+      }),
+      buildDeltaMedication('NITROGLICERINA', 'DELTA_SUBLINGUAL_WAKE', 1, {
+        activePrinciple: 'Nitroglicerina',
+        administrationRoute: 'Via sublingual',
+        doseValue: '1',
+        doseUnit: DoseUnit.COMP,
+      }),
+      buildDeltaMedication('SALBUTAMOL', 'DELTA_INALATORIO_12H', 2, {
+        activePrinciple: 'Salbutamol',
+        administrationRoute: 'Via inalatória',
+        doseValue: '2',
+        doseUnit: DoseUnit.JATOS,
+      }),
+    ]);
+
+    expect(result.routine.banho).toBe('08:30');
+    expect(doseTimes(result, 'XALACOM')).toEqual(['21:00']);
+    expect(doseTimes(result, 'OTOCIRIAX')).toEqual(['06:00', '18:00']);
+    expect(doseTimes(result, 'METRONIDAZOL')).toEqual(['20:40']);
+    expect(doseTimes(result, 'CETOCONAZOL')).toEqual(['08:30']);
+    expect(item(result, 'CETOCONAZOL').doses[0].contextoHorario).toMatchObject({
+      ancora: ClinicalAnchor.APOS_BANHO,
+      ancora_horario_minutos: 510,
+    });
+    expect(doseTimes(result, 'BUDESONIDA NASAL')).toEqual(['06:00']);
+    expect(doseTimes(result, 'SUPOSITORIO DE GLICERINA')).toEqual(['21:00']);
+    expect(doseTimes(result, 'NITROGLICERINA')).toEqual(['06:00']);
+    expect(doseTimes(result, 'SALBUTAMOL')).toEqual(['06:00', '18:00']);
+  });
+
+  it('requires manual adjustment for APOS_BANHO when routine has no bath time', async () => {
+    const { service } = createSchedulingService({ routine: standardRoutine });
+    const result = await buildScheduleResult(service, [
+      buildDeltaMedication('CETOCONAZOL', 'DELTA_TOPICO_APOS_BANHO', 1, {
+        activePrinciple: 'Cetoconazol 20mg/g',
+        administrationRoute: 'USO TOPICO',
+        doseAmount: 'AREA AFETADA',
+      }),
+    ]);
+
+    expect(result.routine.banho).toBeNull();
+    expect(item(result, 'CETOCONAZOL').doses[0]).toMatchObject({
+      horario: '06:00',
+      status: ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED,
+      reasonCode: ConflictReasonCode.MANUAL_REQUIRED_MISSING_ROUTINE_ANCHOR,
+      contextoHorario: expect.objectContaining({
+        ancora: ClinicalAnchor.APOS_BANHO,
+        ancora_horario_minutos: null,
+      }),
+    });
   });
 
   it('GASTROGEL and SUCRAFILM follow the conflict examples for salts and sucralfate', async () => {

@@ -18,8 +18,9 @@ export interface RoutineClockInput {
   lanche: string;
   jantar: string;
   dormir: string;
+  banho?: string | null;
 }
-export type RoutineTimeline = Record<MealAnchor, number>;
+export type RoutineTimeline = Record<MealAnchor, number> & { banho?: number };
 
 export function parseClockInput(value: string): ParsedClockInput {
   if (!/^\d{2}:\d{2}$/.test(value)) {
@@ -74,10 +75,24 @@ export function normalizeRoutineTimeline(routine: RoutineClockInput): RoutineTim
     orderedAnchors.map(({ value }) => value),
   );
 
-  return orderedAnchors.reduce((timeline, { anchor }, index) => {
+  const timeline = orderedAnchors.reduce((timeline, { anchor }, index) => {
     timeline[anchor] = normalizedMinuteIndices[index];
     return timeline;
   }, {} as RoutineTimeline);
+
+  if (routine.banho) {
+    const parsedBath = parseClockInput(routine.banho);
+    let bathMinuteIndex = parsedBath.dayMinutes;
+    if (
+      bathMinuteIndex < timeline[MealAnchor.ACORDAR] &&
+      timeline[MealAnchor.DORMIR] >= MINUTES_PER_DAY
+    ) {
+      bathMinuteIndex += MINUTES_PER_DAY;
+    }
+    timeline.banho = bathMinuteIndex;
+  }
+
+  return timeline;
 }
 
 export function formatMinuteIndex(total: number): string {

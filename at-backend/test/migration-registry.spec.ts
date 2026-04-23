@@ -14,6 +14,7 @@ describe('Migration registry', () => {
       '1763488800000-ConvertClinicalTimeColumnsToVarchar.ts',
       '1763571600000-NormalizePrescriptionPhaseDoseOverrides.ts',
       '1763662800000-HardenConflictAuditColumnsInScheduledDoses.ts',
+      '1763749200000-AddBathTimeToPatientRoutines.ts',
     ]);
   });
 });

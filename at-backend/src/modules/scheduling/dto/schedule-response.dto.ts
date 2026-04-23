@@ -160,6 +160,7 @@ export interface SchedulingRoutineHeaderDto {
   lanche: string;
   jantar: string;
   dormir: string;
+  banho: string | null;
 }
 
 export interface SchedulingResultDto {

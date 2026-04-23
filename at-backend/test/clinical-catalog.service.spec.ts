@@ -304,6 +304,48 @@ describe('ClinicalCatalogService', () => {
             expect.objectContaining({ code: 'DELTA_METRONIDAZOL_VAGINAL' }),
           ]),
         }),
+        expect.objectContaining({
+          commercialName: 'CETOCONAZOL',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_TOPICO_APOS_BANHO' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'XALACOM',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_OCULAR_BEDTIME' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'OTOCIRIAX',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_OTICO_12H' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'BUDESONIDA NASAL',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_INTRANASAL_WAKE' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'SUPOSITORIO DE GLICERINA',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_RETAL_BEDTIME' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'NITROGLICERINA',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_SUBLINGUAL_WAKE' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'SALBUTAMOL',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_INALATORIO_12H' }),
+          ]),
+        }),
       ]),
     );
   });
@@ -341,5 +383,18 @@ describe('ClinicalCatalogService', () => {
     expect(protocolsByCode.get('GROUP_INSUL_RAPIDA_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3, 4]);
     expect(protocolsByCode.get('GROUP_INSUL_INTER_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
     expect(protocolsByCode.get('GROUP_INSUL_LONGA_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_OCULAR_BEDTIME')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_OTICO_12H')?.frequencies.map((frequency) => frequency.frequency)).toEqual([2]);
+    expect(protocolsByCode.get('DELTA_METRONIDAZOL_VAGINAL')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_TOPICO_APOS_BANHO')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_INTRANASAL_WAKE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_RETAL_BEDTIME')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_SUBLINGUAL_WAKE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_INALATORIO_12H')?.frequencies.map((frequency) => frequency.frequency)).toEqual([2]);
+    expect(
+      protocolsByCode
+        .get('DELTA_TOPICO_APOS_BANHO')
+        ?.frequencies[0]?.steps.map((step) => step.anchor),
+    ).toEqual([ClinicalAnchor.APOS_BANHO]);
   });
 });

@@ -1,4 +1,5 @@
 import { IsHhmmTime } from '../../../common/validators/is-hhmm-time.validator';
+import { IsOptional } from 'class-validator';
 
 export class CreateRoutineDto {
   @IsHhmmTime()
@@ -18,4 +19,8 @@ export class CreateRoutineDto {
 
   @IsHhmmTime()
   dormir: string;
+
+  @IsOptional()
+  @IsHhmmTime()
+  banho?: string | null;
 }

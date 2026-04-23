@@ -5,5 +5,6 @@ export enum ClinicalAnchor {
   LANCHE = 'LANCHE',
   JANTAR = 'JANTAR',
   DORMIR = 'DORMIR',
+  APOS_BANHO = 'APOS_BANHO',
   MANUAL = 'MANUAL',
 }

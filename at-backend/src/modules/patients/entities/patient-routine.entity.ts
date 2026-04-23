@@ -27,6 +27,9 @@ export class PatientRoutine {
   @Column({ type: 'varchar', length: 5 })
   dormir: string;
 
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  banho?: string | null;
+
   @Column({ default: true })
   active: boolean;
 

@@ -1313,6 +1313,211 @@ export class ClinicalCatalogService {
               },
             ],
           },
+          {
+            code: 'DELTA_TOPICO_APOS_BANHO',
+            name: 'Tópico após o banho',
+            description: 'Uso tópico diário após o banho.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.APOS_BANHO,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'XALACOM',
+        activePrinciple: 'Latanoprosta + Timolol',
+        presentation: 'Solução ocular',
+        pharmaceuticalForm: 'Solução ocular',
+        administrationRoute: 'Via ocular',
+        usageInstructions: 'Aplicar conforme prescrição oftálmica.',
+        isOphthalmic: true,
+        protocols: [
+          {
+            code: 'DELTA_OCULAR_BEDTIME',
+            name: 'Delta ocular ao dormir',
+            description: 'Aplicação ocular no horário de dormir.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'OTOCIRIAX',
+        activePrinciple: 'Ciprofloxacino + Hidrocortisona',
+        presentation: 'Solução otológica',
+        pharmaceuticalForm: 'Solução otológica',
+        administrationRoute: 'Via otológica',
+        usageInstructions: 'Aplicar conforme prescrição otológica.',
+        isOtic: true,
+        protocols: [
+          {
+            code: 'DELTA_OTICO_12H',
+            name: 'Delta otológico 12/12h',
+            description: 'Aplicação otológica ao acordar e 12 horas após.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 2,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 720,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'BUDESONIDA NASAL',
+        activePrinciple: 'Budesonida',
+        presentation: 'Suspensão spray nasal',
+        pharmaceuticalForm: 'Spray nasal',
+        administrationRoute: 'Via intra nasal',
+        usageInstructions: 'Aplicar por via intranasal conforme prescrição.',
+        protocols: [
+          {
+            code: 'DELTA_INTRANASAL_WAKE',
+            name: 'Delta intranasal ao acordar',
+            description: 'Aplicação intranasal ao acordar.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'SUPOSITORIO DE GLICERINA',
+        activePrinciple: 'Glicerina',
+        presentation: 'Supositório',
+        pharmaceuticalForm: 'Supositório',
+        administrationRoute: 'Via retal',
+        usageInstructions: 'Administrar por via retal conforme prescrição.',
+        protocols: [
+          {
+            code: 'DELTA_RETAL_BEDTIME',
+            name: 'Delta retal ao dormir',
+            description: 'Administração retal no horário de dormir.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.DORMIR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'NITROGLICERINA',
+        activePrinciple: 'Nitroglicerina',
+        presentation: 'Comprimido sublingual',
+        pharmaceuticalForm: 'Comprimido sublingual',
+        administrationRoute: 'Via sublingual',
+        usageInstructions: 'Administrar por via sublingual conforme prescrição.',
+        protocols: [
+          {
+            code: 'DELTA_SUBLINGUAL_WAKE',
+            name: 'Delta sublingual ao acordar',
+            description: 'Administração sublingual ao acordar.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'SALBUTAMOL',
+        activePrinciple: 'Salbutamol',
+        presentation: 'Suspensão aerossol',
+        pharmaceuticalForm: 'Suspensão aerossol',
+        administrationRoute: 'Via inalatória',
+        usageInstructions: 'Usar por inalação conforme prescrição.',
+        protocols: [
+          {
+            code: 'DELTA_INALATORIO_12H',
+            name: 'Delta inalatório 12/12h',
+            description: 'Inalação ao acordar e 12 horas após.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 2,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 720,
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
     ];

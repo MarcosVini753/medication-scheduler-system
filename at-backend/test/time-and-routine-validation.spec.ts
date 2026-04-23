@@ -95,6 +95,47 @@ describe('time and routine validation', () => {
     });
   });
 
+  it('accepts banho as an optional routine time and normalizes it on the clinical timeline', () => {
+    const withoutBath = plainToInstance(CreateRoutineDto, {
+      acordar: '06:00',
+      cafe: '07:00',
+      almoco: '12:00',
+      lanche: '15:00',
+      jantar: '19:00',
+      dormir: '22:00',
+    });
+    expect(flattenErrors(validateSync(withoutBath))).toEqual([]);
+
+    const withBath = plainToInstance(CreateRoutineDto, {
+      acordar: '06:00',
+      cafe: '07:00',
+      almoco: '12:00',
+      lanche: '15:00',
+      jantar: '19:00',
+      dormir: '22:00',
+      banho: '08:30',
+    });
+    expect(flattenErrors(validateSync(withBath))).toEqual([]);
+    expect(normalizeRoutineTimeline(withBath)).toMatchObject({ banho: 510 });
+  });
+
+  it('normalizes banho after midnight when the clinical routine crosses midnight', () => {
+    expect(
+      normalizeRoutineTimeline({
+        acordar: '06:00',
+        cafe: '07:00',
+        almoco: '12:00',
+        lanche: '16:00',
+        jantar: '19:00',
+        dormir: '02:00',
+        banho: '01:00',
+      }),
+    ).toMatchObject({
+      DORMIR: 1560,
+      banho: 1500,
+    });
+  });
+
   it('accepts valid routines when dormir crosses midnight and keeps interval validation', () => {
     expect(() =>
       validateRoutine({

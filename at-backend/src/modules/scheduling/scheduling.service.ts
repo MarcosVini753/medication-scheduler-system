@@ -52,7 +52,7 @@ import {
   buildCalendarDocumentHeaderConfig,
 } from "./config/calendar-document-header.config";
 
-type ScheduleAnchors = Record<ClinicalAnchor, number>;
+type ScheduleAnchors = Partial<Record<ClinicalAnchor, number>>;
 interface PhaseWindow {
   startDate: string;
   endDate?: string;
@@ -205,7 +205,7 @@ export class SchedulingService {
   private toScheduleAnchors(
     routine: Pick<
       PatientRoutine,
-      "acordar" | "cafe" | "almoco" | "lanche" | "jantar" | "dormir"
+      "acordar" | "cafe" | "almoco" | "lanche" | "jantar" | "dormir" | "banho"
     >,
   ): ScheduleAnchors {
     const timeline = normalizeRoutineTimeline({
@@ -215,9 +215,10 @@ export class SchedulingService {
       lanche: routine.lanche,
       jantar: routine.jantar,
       dormir: routine.dormir,
+      banho: routine.banho,
     });
 
-    return {
+    const anchors: ScheduleAnchors = {
       [ClinicalAnchor.ACORDAR]: timeline[ClinicalAnchor.ACORDAR],
       [ClinicalAnchor.CAFE]: timeline[ClinicalAnchor.CAFE],
       [ClinicalAnchor.ALMOCO]: timeline[ClinicalAnchor.ALMOCO],
@@ -226,6 +227,10 @@ export class SchedulingService {
       [ClinicalAnchor.DORMIR]: timeline[ClinicalAnchor.DORMIR],
       [ClinicalAnchor.MANUAL]: 0,
     };
+    if (timeline.banho !== undefined) {
+      anchors[ClinicalAnchor.APOS_BANHO] = timeline.banho;
+    }
+    return anchors;
   }
 
   private resolveActiveRoutineFromPatient(
@@ -341,20 +346,68 @@ export class SchedulingService {
       phase.frequency,
     );
 
-    return frequencyConfig.steps.map((step) =>
-      this.createEntry(
+    return frequencyConfig.steps.map((step) => {
+      const anchorTimeInMinutes = anchors[step.anchor];
+      if (anchorTimeInMinutes === undefined) {
+        return this.createMissingRoutineAnchorEntry(
+          prescription,
+          medication,
+          phase,
+          step.doseLabel,
+          step.semanticTag,
+          step.anchor,
+          step.offsetMinutes,
+          phaseWindow,
+          anchors,
+        );
+      }
+
+      return this.createEntry(
         prescription,
         medication,
         phase,
         step.doseLabel,
-        anchors[step.anchor] + step.offsetMinutes,
+        anchorTimeInMinutes + step.offsetMinutes,
         step.semanticTag,
         step.anchor,
-        anchors[step.anchor],
+        anchorTimeInMinutes,
         step.offsetMinutes,
         phaseWindow,
-      ),
+      );
+    });
+  }
+
+  private createMissingRoutineAnchorEntry(
+    prescription: PatientPrescription,
+    medication: PatientPrescriptionMedication,
+    phase: PatientPrescriptionPhase,
+    doseLabel: string,
+    semanticTag: ClinicalSemanticTag,
+    anchor: ClinicalAnchor,
+    offsetMinutes: number,
+    phaseWindow: PhaseWindow,
+    anchors: ScheduleAnchors,
+  ): WorkingEntry {
+    const fallbackTime = anchors[ClinicalAnchor.ACORDAR] ?? 0;
+    const reasonText = `ajuste manual exigido porque a rotina não possui horário para ${toClinicalAnchorLabel(anchor)}.`;
+    const entry = this.createEntry(
+      prescription,
+      medication,
+      phase,
+      doseLabel,
+      fallbackTime,
+      semanticTag,
+      anchor,
+      undefined,
+      offsetMinutes,
+      phaseWindow,
+      reasonText,
     );
+    entry.status = ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED;
+    entry.resolutionReasonCode =
+      ConflictReasonCode.MANUAL_REQUIRED_MISSING_ROUTINE_ANCHOR;
+    entry.resolutionReasonText = reasonText;
+    return entry;
   }
 
   private createEntry(
@@ -365,7 +418,7 @@ export class SchedulingService {
     timeInMinutes: number,
     semanticTag: ClinicalSemanticTag,
     anchor: ClinicalAnchor,
-    anchorTimeInMinutes: number,
+    anchorTimeInMinutes: number | undefined,
     offsetMinutes: number,
     phaseWindow: PhaseWindow,
     note?: string,
@@ -607,6 +660,7 @@ export class SchedulingService {
       lanche: routine.lanche,
       jantar: routine.jantar,
       dormir: routine.dormir,
+      banho: routine.banho ?? null,
     };
   }
 
@@ -982,6 +1036,29 @@ function toConflictMatchLabel(matchKind?: ConflictMatchKind): string | null {
       return "Inativação obrigatória";
     default:
       return null;
+  }
+}
+
+function toClinicalAnchorLabel(anchor: ClinicalAnchor): string {
+  switch (anchor) {
+    case ClinicalAnchor.APOS_BANHO:
+      return "após o banho";
+    case ClinicalAnchor.ACORDAR:
+      return "acordar";
+    case ClinicalAnchor.CAFE:
+      return "café";
+    case ClinicalAnchor.ALMOCO:
+      return "almoço";
+    case ClinicalAnchor.LANCHE:
+      return "lanche";
+    case ClinicalAnchor.JANTAR:
+      return "jantar";
+    case ClinicalAnchor.DORMIR:
+      return "dormir";
+    case ClinicalAnchor.MANUAL:
+      return "horário manual";
+    default:
+      return anchor;
   }
 }
 
