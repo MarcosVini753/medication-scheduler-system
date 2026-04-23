@@ -212,6 +212,12 @@ describe('ClinicalCatalogService', () => {
           ]),
         }),
         expect.objectContaining({
+          commercialName: 'DORALGINA',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'GROUP_I_DORALGINA_6H' }),
+          ]),
+        }),
+        expect.objectContaining({
           commercialName: 'SIMETICONA',
           protocols: expect.arrayContaining([
             expect.objectContaining({
@@ -248,6 +254,12 @@ describe('ClinicalCatalogService', () => {
               code: 'GROUP_III_JANTAR_STANDARD',
               isDefault: false,
             }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'CONTRAVE',
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'GROUP_III_CONTRAVE' }),
           ]),
         }),
         expect.objectContaining({
@@ -314,6 +326,13 @@ describe('ClinicalCatalogService', () => {
           commercialName: 'LANTUS',
           protocols: expect.arrayContaining([
             expect.objectContaining({ code: 'GROUP_INSUL_LONGA_STANDARD' }),
+          ]),
+        }),
+        expect.objectContaining({
+          commercialName: 'PERLUTAN',
+          isContraceptiveMonthly: true,
+          protocols: expect.arrayContaining([
+            expect.objectContaining({ code: 'DELTA_PERLUTAN_MONTHLY' }),
           ]),
         }),
         expect.objectContaining({
@@ -419,6 +438,22 @@ describe('ClinicalCatalogService', () => {
         offsetMinutes: 1080,
       }),
     ]);
+    const doralginaFrequency = protocolsByCode.get('GROUP_I_DORALGINA_6H')?.frequencies[0];
+    expect(doralginaFrequency).toMatchObject({
+      frequency: 4,
+      label: '4x ao dia / 6/6h',
+      allowedRecurrenceTypes: [
+        TreatmentRecurrence.DAILY,
+        TreatmentRecurrence.PRN,
+      ],
+      allowsPrn: true,
+    });
+    expect(doralginaFrequency?.steps.map((step) => step.offsetMinutes)).toEqual([
+      0,
+      360,
+      720,
+      1080,
+    ]);
     expect(protocolsByCode.get('GROUP_II_WAKE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3]);
     const bifosFrequency = protocolsByCode.get('GROUP_II_BIFOS_STANDARD')?.frequencies[0];
     expect(bifosFrequency).toMatchObject({
@@ -496,6 +531,15 @@ describe('ClinicalCatalogService', () => {
         }),
       ],
     });
+    const contraveProtocol = protocolsByCode.get('GROUP_III_CONTRAVE');
+    expect(contraveProtocol?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
+    expect(contraveProtocol?.frequencies.find((frequency) => frequency.frequency === 2)).toMatchObject({
+      allowsVariableDoseBySchedule: true,
+      steps: [
+        expect.objectContaining({ anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 }),
+        expect.objectContaining({ anchor: ClinicalAnchor.JANTAR, offsetMinutes: 0 }),
+      ],
+    });
     expect(protocolsByCode.get('GROUP_III_LAX_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
     expect(protocolsByCode.get('GROUP_III_ESTAT_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('GROUP_III_DIU_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
@@ -507,6 +551,14 @@ describe('ClinicalCatalogService', () => {
     expect(protocolsByCode.get('GROUP_INSUL_RAPIDA_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3, 4]);
     expect(protocolsByCode.get('GROUP_INSUL_INTER_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2]);
     expect(protocolsByCode.get('GROUP_INSUL_LONGA_STANDARD')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
+    expect(protocolsByCode.get('DELTA_PERLUTAN_MONTHLY')?.frequencies[0]).toMatchObject({
+      frequency: 1,
+      label: '1x ao mês',
+      allowedRecurrenceTypes: [TreatmentRecurrence.MONTHLY],
+      steps: [
+        expect.objectContaining({ anchor: ClinicalAnchor.ACORDAR, offsetMinutes: 0 }),
+      ],
+    });
     expect(protocolsByCode.get('DELTA_OCULAR_BEDTIME')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);
     expect(protocolsByCode.get('DELTA_OTICO_12H')?.frequencies.map((frequency) => frequency.frequency)).toEqual([2]);
     expect(protocolsByCode.get('DELTA_METRONIDAZOL_VAGINAL')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1]);

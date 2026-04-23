@@ -1154,7 +1154,7 @@ describe('PatientPrescriptionService', () => {
     expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
   });
 
-  it('accepts GROUP_I frequency 4 for daily and PRN 6/6h prescriptions', async () => {
+  it('accepts DORALGINA frequency 4 for daily and PRN 6/6h prescriptions', async () => {
     const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
       createService();
     const frequency4 = {
@@ -1193,11 +1193,16 @@ describe('PatientPrescriptionService', () => {
       ],
     };
 
-    clinicalCatalogService.findMedicationById.mockResolvedValue(
-      buildClinicalMedicationWithProtocol({
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      ...buildClinicalMedicationWithProtocol({
+        code: 'GROUP_I_DORALGINA_6H',
+        name: 'Doralgina 6/6h',
         frequencies: [frequency4],
       }),
-    );
+      commercialName: 'DORALGINA',
+      activePrinciple: 'Dipirona + isometepteno + cafeína',
+      usageInstructions: 'Tomar em caso de dor conforme prescrição.',
+    });
     prescriptionRepository.findOne.mockImplementation(async ({ where }: { where: { id: string } }) => ({
       id: where.id,
       patient: { id: 'patient-1' },
@@ -1208,16 +1213,16 @@ describe('PatientPrescriptionService', () => {
           sourceProtocolId: 'protocol-1',
           medicationSnapshot: {
             id: 'clinical-1',
-            commercialName: 'LOSARTANA',
-            activePrinciple: 'Losartana',
+            commercialName: 'DORALGINA',
+            activePrinciple: 'Dipirona + isometepteno + cafeína',
             presentation: 'Comprimido',
             administrationRoute: 'VO',
-            usageInstructions: 'Conforme prescricao.',
+            usageInstructions: 'Tomar em caso de dor conforme prescrição.',
           },
           protocolSnapshot: {
             id: 'protocol-1',
-            code: 'GROUP_I_STANDARD',
-            name: 'Grupo I',
+            code: 'GROUP_I_DORALGINA_6H',
+            name: 'Doralgina 6/6h',
             description: 'Protocolo base',
             groupCode: GroupCode.GROUP_I,
             priority: 0,
@@ -1312,7 +1317,24 @@ describe('PatientPrescriptionService', () => {
       createService();
 
     clinicalCatalogService.findMedicationById.mockResolvedValue({
-      ...buildClinicalMedicationWithProtocol(),
+      ...buildClinicalMedicationWithProtocol({
+        code: 'DELTA_OCULAR_BEDTIME',
+        name: 'Delta ocular ao dormir',
+        group: { code: GroupCode.GROUP_DELTA },
+        frequencies: [
+          {
+            frequency: 1,
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.DORMIR,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
       commercialName: 'XALACOM',
       administrationRoute: 'VIA OCULAR',
       isOphthalmic: true,
@@ -1359,13 +1381,37 @@ describe('PatientPrescriptionService', () => {
       createService();
 
     clinicalCatalogService.findMedicationById.mockResolvedValue({
-      ...buildClinicalMedicationWithProtocol(),
+      ...buildClinicalMedicationWithProtocol({
+        code: 'DELTA_OTICO_12H',
+        name: 'Delta otológico 12/12h',
+        group: { code: GroupCode.GROUP_DELTA },
+        frequencies: [
+          {
+            frequency: 2,
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.ACORDAR,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+              {
+                doseLabel: 'D2',
+                anchor: ClinicalAnchor.ACORDAR,
+                offsetMinutes: 720,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
       commercialName: 'OTOCIRIAX',
       administrationRoute: 'VIA OTOLOGICA',
       isOphthalmic: false,
       isOtic: true,
     });
     mockLoadedPrescriptionForLaterality(prescriptionRepository, {
+      frequency: 2,
       ocularLaterality: undefined,
       oticLaterality: OticLaterality.BOTH_EARS,
     });
@@ -1381,7 +1427,7 @@ describe('PatientPrescriptionService', () => {
             phases: [
               {
                 phaseOrder: 1,
-                frequency: 1,
+                frequency: 2,
                 sameDosePerSchedule: true,
                 doseAmount: '1 GOTA',
                 doseValue: '1',
@@ -1798,8 +1844,29 @@ describe('PatientPrescriptionService', () => {
       createService();
 
     clinicalCatalogService.findMedicationById.mockResolvedValue({
-      ...buildClinicalMedicationWithProtocol(),
+      ...buildClinicalMedicationWithProtocol({
+        code: 'DELTA_PERLUTAN_MONTHLY',
+        name: 'Perlutan mensal',
+        group: { code: GroupCode.GROUP_DELTA },
+        frequencies: [
+          {
+            frequency: 1,
+            label: '1x ao mês',
+            allowedRecurrenceTypes: [TreatmentRecurrence.MONTHLY],
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.ACORDAR,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
       commercialName: 'PERLUTAN',
+      activePrinciple: 'Algestona acetofenida + Enantato de estradiol',
+      administrationRoute: 'IM',
       isContraceptiveMonthly: true,
     });
     mockLoadedPrescriptionForLaterality(prescriptionRepository, {

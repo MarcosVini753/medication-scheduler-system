@@ -418,6 +418,56 @@ export class ClinicalCatalogService {
         ],
       },
       {
+        commercialName: 'DORALGINA',
+        activePrinciple: 'Dipirona + isometepteno + cafeína',
+        presentation: 'Comprimido',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Tomar em caso de dor conforme prescrição.',
+        protocols: [
+          {
+            code: 'GROUP_I_DORALGINA_6H',
+            name: 'Doralgina 6/6h',
+            description: 'Exemplo real do cliente para analgésico 6/6h e uso PRN em caso de dor.',
+            groupCode: GroupCode.GROUP_I,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 4,
+                label: '4x ao dia / 6/6h',
+                allowedRecurrenceTypes: [
+                  TreatmentRecurrence.DAILY,
+                  TreatmentRecurrence.PRN,
+                ],
+                allowsPrn: true,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 360,
+                  },
+                  {
+                    doseLabel: 'D3',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 720,
+                  },
+                  {
+                    doseLabel: 'D4',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 1080,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
         commercialName: 'SIMETICONA',
         activePrinciple: 'Simeticona 75 mg/ml',
         presentation: 'Frasco 15 ml',
@@ -743,6 +793,55 @@ export class ClinicalCatalogService {
                 steps: [
                   {
                     doseLabel: 'D1',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'CONTRAVE',
+        activePrinciple: 'Naltrexona 8 mg + Bupropiona 90 mg',
+        presentation: 'Comprimido revestido de liberação prolongada',
+        pharmaceuticalForm: 'Comprimido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Não tome com refeições com alto teor de gordura.',
+        protocols: [
+          {
+            code: 'GROUP_III_CONTRAVE',
+            name: 'Contrave - titulação com refeições',
+            description: 'Exemplo real do cliente para fases sucessivas, doses variáveis e uso contínuo relacionado às refeições.',
+            groupCode: GroupCode.GROUP_III,
+            isDefault: false,
+            frequencies: [
+              {
+                frequency: 1,
+                label: '1x ao dia no café',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                ],
+              },
+              {
+                frequency: 2,
+                label: '2x ao dia no café e jantar',
+                allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+                allowsVariableDoseBySchedule: true,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
                     anchor: ClinicalAnchor.JANTAR,
                     offsetMinutes: 0,
                   },
@@ -1394,6 +1493,38 @@ export class ClinicalCatalogService {
                 frequency: 1,
                 steps: [
                   { doseLabel: 'D1', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        commercialName: 'PERLUTAN',
+        activePrinciple: 'Algestona acetofenida + Enantato de estradiol',
+        presentation: 'Ampola 1 ml',
+        pharmaceuticalForm: 'Solução injetável',
+        administrationRoute: 'IM',
+        usageInstructions: 'Aplicar por via intramuscular conforme regra mensal.',
+        isContraceptiveMonthly: true,
+        protocols: [
+          {
+            code: 'DELTA_PERLUTAN_MONTHLY',
+            name: 'Perlutan mensal',
+            description: 'Exemplo real do cliente para injetável mensal no dia clínico ordinal após início da menstruação.',
+            groupCode: GroupCode.GROUP_DELTA,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 1,
+                label: '1x ao mês',
+                allowedRecurrenceTypes: [TreatmentRecurrence.MONTHLY],
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
                 ],
               },
             ],
