@@ -6,6 +6,7 @@ import { ConflictMatchKind } from '../src/common/enums/conflict-match-kind.enum'
 import { ConflictReasonCode } from '../src/common/enums/conflict-reason-code.enum';
 import { DoseUnit } from '../src/common/enums/dose-unit.enum';
 import { GroupCode } from '../src/common/enums/group-code.enum';
+import { MonthlySpecialReference } from '../src/common/enums/monthly-special-reference.enum';
 import { OcularLaterality } from '../src/common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../src/common/enums/otic-laterality.enum';
 import { PrnReason } from '../src/common/enums/prn-reason.enum';
@@ -250,7 +251,7 @@ describe('Client document calendar examples', () => {
           usageInstructions: 'Aplicar 1 gota à noite.',
         },
         protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_DELTA, {
-          code: 'XALACOM_OCULAR',
+          code: 'DELTA_OCULAR_BEDTIME',
           frequencies: [
             {
               frequency: 1,
@@ -281,7 +282,7 @@ describe('Client document calendar examples', () => {
           usageInstructions: 'Aplicar conforme prescrição.',
         },
         protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_DELTA, {
-          code: 'OTOCIRIAX_OTICO',
+          code: 'DELTA_OTICO_12H',
           frequencies: [
             {
               frequency: 2,
@@ -316,6 +317,54 @@ describe('Client document calendar examples', () => {
     expect(doseTimes(result, 'OTOCIRIAX')).toEqual(['06:00', '18:00']);
   });
 
+  it('PERLUTAN renders monthly injectable rule using inclusive menstrual ordinal day', async () => {
+    const { service } = createSchedulingService({ routine: standardRoutine });
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: 'PERLUTAN',
+          activePrinciple: 'Algestona acetofenida + Enantato de estradiol',
+          presentation: 'Ampola 1 ml',
+          pharmaceuticalForm: 'Solução injetável',
+          administrationRoute: 'IM',
+          usageInstructions: 'Aplicar por via intramuscular conforme regra mensal.',
+          isContraceptiveMonthly: true,
+        },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_DELTA, {
+          code: 'DELTA_PERLUTAN_MONTHLY',
+          frequencies: [
+            {
+              frequency: 1,
+              steps: [
+                { doseLabel: 'D1', anchor: ClinicalAnchor.ACORDAR, offsetMinutes: 0, semanticTag: ClinicalSemanticTag.STANDARD },
+              ],
+            },
+          ],
+        }),
+        phases: [
+          buildPhase({
+            frequency: 1,
+            doseValue: '1',
+            doseUnit: DoseUnit.ML,
+            recurrenceType: TreatmentRecurrence.MONTHLY,
+            monthlyDay: undefined,
+            monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
+            monthlySpecialBaseDate: '2026-04-01',
+            monthlySpecialOffsetDays: 8,
+            treatmentDays: undefined,
+          }),
+        ],
+      }),
+    ]);
+
+    expect(item(result, 'PERLUTAN')).toMatchObject({
+      via: 'IM',
+      recorrenciaTexto:
+        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
+    });
+    expect(doseTimes(result, 'PERLUTAN')).toEqual(['06:00']);
+  });
+
   it('CONTRAVE preserves successive phase blocks, dates and per-dose values from the example', async () => {
     const { service } = createSchedulingService({ routine: standardRoutine });
     const result = await buildScheduleResult(
@@ -329,7 +378,9 @@ describe('Client document calendar examples', () => {
             administrationRoute: 'VO',
             usageInstructions: 'Não tome com refeições com alto teor de gordura.',
           },
-          protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_III),
+          protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_III, {
+            code: 'GROUP_III_CONTRAVE',
+          }),
           phases: [
             buildPhase({ phaseOrder: 1, frequency: 1, treatmentDays: 7, doseValue: '1', doseUnit: DoseUnit.COMP }),
             buildPhase({ phaseOrder: 2, frequency: 2, treatmentDays: 7, doseValue: '1', doseUnit: DoseUnit.COMP }),

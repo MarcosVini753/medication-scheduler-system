@@ -673,6 +673,199 @@ describe('PatientPrescriptionService', () => {
     });
   });
 
+  it('accepts CONTRAVE successive phases with variable dose and continuous use', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+    const frequency1 = {
+      frequency: 1,
+      allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+      steps: [
+        {
+          doseLabel: 'D1',
+          anchor: ClinicalAnchor.CAFE,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+      ],
+    };
+    const frequency2 = {
+      frequency: 2,
+      allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+      allowsVariableDoseBySchedule: true,
+      steps: [
+        {
+          doseLabel: 'D1',
+          anchor: ClinicalAnchor.CAFE,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+        {
+          doseLabel: 'D2',
+          anchor: ClinicalAnchor.JANTAR,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+      ],
+    };
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue({
+      id: 'clinical-contrave',
+      commercialName: 'CONTRAVE',
+      activePrinciple: 'Naltrexona 8 mg + Bupropiona 90 mg',
+      presentation: 'Comprimido revestido de liberação prolongada',
+      administrationRoute: 'VO',
+      usageInstructions: 'Não tome com refeições com alto teor de gordura.',
+      protocols: [
+        {
+          id: 'protocol-contrave',
+          code: 'GROUP_III_CONTRAVE',
+          name: 'Contrave - titulação com refeições',
+          description: 'Exemplo real do cliente para fases sucessivas.',
+          priority: 0,
+          isDefault: false,
+          group: { code: GroupCode.GROUP_III },
+          frequencies: [frequency1, frequency2],
+          interactionRules: [],
+        },
+      ],
+    });
+    prescriptionRepository.findOne.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      patient: { id: 'patient-1' },
+      medications: [
+        {
+          id: 'prescription-medication-1',
+          sourceClinicalMedicationId: 'clinical-contrave',
+          sourceProtocolId: 'protocol-contrave',
+          medicationSnapshot: {
+            id: 'clinical-contrave',
+            commercialName: 'CONTRAVE',
+            activePrinciple: 'Naltrexona 8 mg + Bupropiona 90 mg',
+            presentation: 'Comprimido revestido de liberação prolongada',
+            administrationRoute: 'VO',
+            usageInstructions: 'Não tome com refeições com alto teor de gordura.',
+          },
+          protocolSnapshot: {
+            id: 'protocol-contrave',
+            code: 'GROUP_III_CONTRAVE',
+            name: 'Contrave - titulação com refeições',
+            description: 'Exemplo real do cliente para fases sucessivas.',
+            groupCode: GroupCode.GROUP_III,
+            priority: 0,
+            isDefault: false,
+            frequencies: [frequency1, frequency2],
+          },
+          interactionRulesSnapshot: [],
+          phases: [
+            {
+              id: 'phase-1',
+              phaseOrder: 1,
+              frequency: 1,
+              sameDosePerSchedule: true,
+              doseAmount: '1 COMP',
+              doseValue: '1',
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 7,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            },
+            {
+              id: 'phase-2',
+              phaseOrder: 2,
+              frequency: 2,
+              sameDosePerSchedule: true,
+              doseAmount: '1 COMP',
+              doseValue: '1',
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 7,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            },
+            {
+              id: 'phase-3',
+              phaseOrder: 3,
+              frequency: 2,
+              sameDosePerSchedule: false,
+              perDoseOverrides: [
+                { doseLabel: 'D1', doseValue: '2', doseUnit: DoseUnit.COMP },
+                { doseLabel: 'D2', doseValue: '1', doseUnit: DoseUnit.COMP },
+              ],
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 7,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            },
+            {
+              id: 'phase-4',
+              phaseOrder: 4,
+              frequency: 2,
+              sameDosePerSchedule: true,
+              doseAmount: '2 COMP',
+              doseValue: '2',
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: undefined,
+              continuousUse: true,
+              manualAdjustmentEnabled: false,
+            },
+          ],
+        },
+      ],
+    }));
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-contrave',
+            protocolId: 'protocol-contrave',
+            phases: [
+              buildPhasePayload({ phaseOrder: 1, frequency: 1, treatmentDays: 7 }),
+              buildPhasePayload({ phaseOrder: 2, frequency: 2, treatmentDays: 7 }),
+              buildPhasePayload({
+                phaseOrder: 3,
+                frequency: 2,
+                sameDosePerSchedule: false,
+                doseAmount: undefined,
+                doseValue: undefined,
+                doseUnit: undefined,
+                perDoseOverrides: [
+                  { doseLabel: 'D1', doseValue: '2', doseUnit: DoseUnit.COMP },
+                  { doseLabel: 'D2', doseValue: '1', doseUnit: DoseUnit.COMP },
+                ],
+                treatmentDays: 7,
+              }),
+              buildPhasePayload({
+                phaseOrder: 4,
+                frequency: 2,
+                doseAmount: '2 COMP',
+                doseValue: '2',
+                treatmentDays: undefined,
+                continuousUse: true,
+              }),
+            ],
+          },
+        ],
+      }),
+    ).resolves.toBeDefined();
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+    expect(schedulingService.buildAndPersistSchedule.mock.calls[0][0].medications[0]).toMatchObject({
+      medicationSnapshot: { commercialName: 'CONTRAVE' },
+      protocolSnapshot: { code: 'GROUP_III_CONTRAVE', groupCode: GroupCode.GROUP_III },
+      phases: [
+        expect.objectContaining({ phaseOrder: 1, frequency: 1 }),
+        expect.objectContaining({ phaseOrder: 2, frequency: 2 }),
+        expect.objectContaining({ phaseOrder: 3, sameDosePerSchedule: false }),
+        expect.objectContaining({ phaseOrder: 4, continuousUse: true }),
+      ],
+    });
+  });
+
   it('rejects a phase whose frequency is not supported by the chosen protocol', async () => {
     const { service, clinicalCatalogService } = createService();
 
