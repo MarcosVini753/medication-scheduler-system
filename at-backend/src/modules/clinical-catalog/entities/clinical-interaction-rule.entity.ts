@@ -11,6 +11,7 @@ export class ClinicalInteractionRule {
 
   @ManyToOne(() => ClinicalProtocol, (protocol) => protocol.interactionRules, {
     onDelete: 'CASCADE',
+    orphanedRowAction: 'delete',
   })
   protocol: ClinicalProtocol;
 

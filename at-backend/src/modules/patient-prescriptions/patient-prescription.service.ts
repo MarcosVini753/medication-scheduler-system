@@ -738,9 +738,12 @@ export class PatientPrescriptionService {
     frequencySnapshot: ClinicalProtocolSnapshot['frequencies'][number],
     phase: PrescriptionMedicationPhaseDto,
   ): void {
+    const allowedRecurrenceTypes = frequencySnapshot.allowedRecurrenceTypes?.length
+      ? frequencySnapshot.allowedRecurrenceTypes
+      : [TreatmentRecurrence.DAILY];
+
     if (
-      frequencySnapshot.allowedRecurrenceTypes?.length &&
-      !frequencySnapshot.allowedRecurrenceTypes.includes(phase.recurrenceType)
+      !allowedRecurrenceTypes.includes(phase.recurrenceType)
     ) {
       throw new UnprocessableEntityException(
         `Fase ${phase.phaseOrder}: recurrenceType=${phase.recurrenceType} não é permitido no protocolo ${protocolSnapshot.code} para frequency=${phase.frequency}.`,
@@ -749,7 +752,7 @@ export class PatientPrescriptionService {
 
     if (
       phase.recurrenceType === TreatmentRecurrence.PRN &&
-      frequencySnapshot.allowsPrn === false
+      frequencySnapshot.allowsPrn !== true
     ) {
       throw new UnprocessableEntityException(
         `Fase ${phase.phaseOrder}: recurrenceType=PRN não é permitido no protocolo ${protocolSnapshot.code} para frequency=${phase.frequency}.`,

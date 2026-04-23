@@ -145,7 +145,7 @@ describe('Client document calendar examples', () => {
             frequency: 4,
             recurrenceType: TreatmentRecurrence.PRN,
             prnReason: PrnReason.PAIN,
-            treatmentDays: undefined,
+            treatmentDays: 6,
             doseValue: '1',
             doseUnit: DoseUnit.COMP,
           }),
@@ -156,6 +156,8 @@ describe('Client document calendar examples', () => {
     const doralgina = item(result, 'DORALGINA');
     expect(doralgina).toMatchObject({
       recorrenciaTexto: 'Em caso de dor',
+      inicio: '17/04/2026',
+      termino: '22/04/2026',
     });
     expect(doralgina.doses.map((dose) => dose.horario)).toEqual([
       '06:00',

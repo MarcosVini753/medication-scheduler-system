@@ -952,6 +952,50 @@ describe('PatientPrescriptionService', () => {
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
+  it.each([
+    [
+      TreatmentRecurrence.WEEKLY,
+      { weeklyDay: 'SEGUNDA' },
+    ],
+    [
+      TreatmentRecurrence.MONTHLY,
+      { monthlyDay: 15 },
+    ],
+    [
+      TreatmentRecurrence.PRN,
+      { prnReason: PrnReason.PAIN },
+    ],
+  ])(
+    'rejects %s when the legacy protocol frequency omits allowedRecurrenceTypes',
+    async (recurrenceType, recurrenceFields) => {
+      const { service, clinicalCatalogService } = createService();
+
+      clinicalCatalogService.findMedicationById.mockResolvedValue(
+        buildClinicalMedicationWithProtocol(),
+      );
+
+      await expectDomainErrorMessage(
+        service.create({
+          patientId: 'patient-1',
+          startedAt: '2026-04-21',
+          medications: [
+            {
+              clinicalMedicationId: 'clinical-1',
+              protocolId: 'protocol-1',
+              phases: [
+                buildPhasePayload({
+                  recurrenceType,
+                  ...recurrenceFields,
+                }),
+              ],
+            },
+          ],
+        }),
+        `Fase 1: recurrenceType=${recurrenceType} não é permitido no protocolo GROUP_I_STANDARD para frequency=1.`,
+      );
+    },
+  );
+
   it('accepts weekly bifosfonate prescription using the default BIFOS protocol', async () => {
     const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
       createService();

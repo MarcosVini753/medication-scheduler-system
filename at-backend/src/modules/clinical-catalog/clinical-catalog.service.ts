@@ -225,20 +225,8 @@ export class ClinicalCatalogService {
         medication,
       ]),
     );
-    const existingProtocolCodes = new Set(
-      existingMedications.flatMap((medication) =>
-        (medication.protocols ?? []).map((protocol) => protocol.code),
-      ),
-    );
 
     for (const seedMedication of seedMedications) {
-      const protocolsToCreate = seedMedication.protocols.filter(
-        (protocol) => !existingProtocolCodes.has(protocol.code),
-      );
-      if (protocolsToCreate.length === 0) {
-        continue;
-      }
-
       const medicationKey = this.buildMedicationSeedKey(
         seedMedication.commercialName,
         seedMedication.activePrinciple,
@@ -246,13 +234,9 @@ export class ClinicalCatalogService {
       const existingMedication = medicationByKey.get(medicationKey);
 
       if (existingMedication) {
-        existingMedication.protocols = [
-          ...(existingMedication.protocols ?? []),
-          ...protocolsToCreate.map((protocolDto) =>
-            this.buildProtocol(protocolDto, groupsByCode),
-          ),
-        ];
-        await this.clinicalMedicationRepository.save(existingMedication);
+        this.applyMedicationSeed(existingMedication, seedMedication, groupsByCode);
+        const saved = await this.clinicalMedicationRepository.save(existingMedication);
+        medicationByKey.set(medicationKey, saved);
       } else {
         const medication = this.clinicalMedicationRepository.create({
           commercialName: seedMedication.commercialName,
@@ -270,16 +254,70 @@ export class ClinicalCatalogService {
           requiresGlycemiaScale: seedMedication.requiresGlycemiaScale ?? false,
           notes: seedMedication.notes,
           isDefault: seedMedication.isDefault ?? false,
-          protocols: protocolsToCreate.map((protocolDto) =>
+          protocols: seedMedication.protocols.map((protocolDto) =>
             this.buildProtocol(protocolDto, groupsByCode),
           ),
         });
         const saved = await this.clinicalMedicationRepository.save(medication);
         medicationByKey.set(medicationKey, saved);
       }
-
-      protocolsToCreate.forEach((protocol) => existingProtocolCodes.add(protocol.code));
     }
+  }
+
+  private applyMedicationSeed(
+    medication: ClinicalMedication,
+    seedMedication: CreateClinicalMedicationDto,
+    groupsByCode: Map<string, ClinicalGroup>,
+  ): void {
+    medication.commercialName = seedMedication.commercialName;
+    medication.activePrinciple = seedMedication.activePrinciple;
+    medication.presentation = seedMedication.presentation;
+    medication.pharmaceuticalForm = seedMedication.pharmaceuticalForm;
+    medication.administrationRoute = seedMedication.administrationRoute;
+    medication.usageInstructions = seedMedication.usageInstructions;
+    medication.diluentType = seedMedication.diluentType;
+    medication.defaultAdministrationUnit = seedMedication.defaultAdministrationUnit;
+    medication.supportsManualAdjustment = seedMedication.supportsManualAdjustment ?? false;
+    medication.isOphthalmic = seedMedication.isOphthalmic ?? false;
+    medication.isOtic = seedMedication.isOtic ?? false;
+    medication.isContraceptiveMonthly = seedMedication.isContraceptiveMonthly ?? false;
+    medication.requiresGlycemiaScale = seedMedication.requiresGlycemiaScale ?? false;
+    medication.notes = seedMedication.notes;
+    medication.isDefault = seedMedication.isDefault ?? false;
+
+    const existingProtocols = medication.protocols ?? [];
+    const protocolByCode = new Map(
+      existingProtocols.map((protocol) => [protocol.code, protocol]),
+    );
+
+    for (const seedProtocol of seedMedication.protocols) {
+      const existingProtocol = protocolByCode.get(seedProtocol.code);
+      if (existingProtocol) {
+        this.applyProtocolSeed(existingProtocol, seedProtocol, groupsByCode);
+      } else {
+        existingProtocols.push(this.buildProtocol(seedProtocol, groupsByCode));
+      }
+    }
+
+    medication.protocols = existingProtocols;
+  }
+
+  private applyProtocolSeed(
+    protocol: ClinicalProtocol,
+    seedProtocol: CreateClinicalProtocolDto,
+    groupsByCode: Map<string, ClinicalGroup>,
+  ): void {
+    const replacement = this.buildProtocol(seedProtocol, groupsByCode);
+    protocol.name = replacement.name;
+    protocol.description = replacement.description;
+    protocol.subgroupCode = replacement.subgroupCode;
+    protocol.priority = replacement.priority;
+    protocol.isDefault = replacement.isDefault;
+    protocol.active = replacement.active;
+    protocol.clinicalNotes = replacement.clinicalNotes;
+    protocol.group = replacement.group;
+    protocol.frequencies = replacement.frequencies;
+    protocol.interactionRules = replacement.interactionRules;
   }
 
   private buildMedicationSeedKey(

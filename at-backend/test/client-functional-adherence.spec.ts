@@ -49,6 +49,8 @@ describe("Suite de aderência funcional ao cliente", () => {
 
     const doralgina = item(result, "DORALGINA");
     expect(doralgina.recorrenciaTexto).toBe("Em caso de dor");
+    expect(doralgina.inicio).toBe("17/04/2026");
+    expect(doralgina.termino).toBe("22/04/2026");
     expect(doralgina.doses.map((dose) => dose.horario)).toEqual([
       "06:00",
       "12:00",

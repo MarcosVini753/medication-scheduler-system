@@ -3,8 +3,8 @@
 | Cenário | Medicamento / protocolo | Entrada principal | Expectativa no calendário |
 | --- | --- | --- | --- |
 | Rotina válida | Rotina padrão do cliente | Acordar 06:00, café 07:00, almoço 13:00, lanche 16:00, jantar 19:00, dormir 21:00, banho 08:30 | Bloco `routine` preserva todos os horários |
-| Grupo I frequência 4 | DORALGINA / GROUP_I_DORALGINA_6H | `frequency=4` | Doses 06:00, 12:00, 18:00, 24:00 |
-| PRN 6/6h | DORALGINA / GROUP_I_DORALGINA_6H | `recurrenceType=PRN`, `prnReason=PAIN` | `recorrenciaTexto='Em caso de dor'` |
+| Grupo I frequência 4 | DORALGINA / GROUP_I_DORALGINA_6H | `frequency=4`, `treatmentDays=6` | Doses 06:00, 12:00, 18:00, 24:00; janela de 6 dias |
+| PRN 6/6h | DORALGINA / GROUP_I_DORALGINA_6H | `recurrenceType=PRN`, `prnReason=PAIN`, `treatmentDays=6` | `recorrenciaTexto='Em caso de dor'` e término no 6º dia |
 | Bifosfonato semanal | ALENDRONATO / GROUP_II_BIFOS_STANDARD | `WEEKLY`, `weeklyDay=SEGUNDA` | Dose 05:00, âncora ACORDAR, offset -60 |
 | Grupo III genérico | MEDICAMENTO GRUPO III / GROUP_III_CAFE_STANDARD | `frequency=3` | Café, almoço e jantar |
 | Ajuste manual | LOSARTANA / GROUP_I | `manualAdjustmentEnabled=true`, `manualTimes=['08:15','20:45']` | Horários preservados com âncora MANUAL |

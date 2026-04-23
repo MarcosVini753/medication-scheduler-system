@@ -10,6 +10,7 @@ export class ClinicalProtocolFrequency {
 
   @ManyToOne(() => ClinicalProtocol, (protocol) => protocol.frequencies, {
     onDelete: 'CASCADE',
+    orphanedRowAction: 'delete',
   })
   protocol: ClinicalProtocol;
 

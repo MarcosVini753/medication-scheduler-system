@@ -10,6 +10,7 @@ export class ClinicalProtocolStep {
 
   @ManyToOne(() => ClinicalProtocolFrequency, (frequencyConfig) => frequencyConfig.steps, {
     onDelete: 'CASCADE',
+    orphanedRowAction: 'delete',
   })
   frequencyConfig: ClinicalProtocolFrequency;
 

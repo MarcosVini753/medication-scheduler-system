@@ -120,7 +120,7 @@ export function buildDoralginaPrn6h() {
         frequency: 4,
         recurrenceType: TreatmentRecurrence.PRN,
         prnReason: PrnReason.PAIN,
-        treatmentDays: undefined,
+        treatmentDays: 6,
         doseValue: "1",
         doseUnit: DoseUnit.COMP,
       }),

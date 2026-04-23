@@ -573,4 +573,172 @@ describe('ClinicalCatalogService', () => {
         ?.frequencies[0]?.steps.map((step) => step.anchor),
     ).toEqual([ClinicalAnchor.APOS_BANHO]);
   });
+
+  it('updates existing seeded medications and protocols without removing custom protocols', async () => {
+    const { service, groupRepository, medicationRepository } = createService();
+    const allGroups = Object.values(GroupCode).map((code) => ({ id: `${code}-id`, code }));
+    const buildProtocol = (
+      code: string,
+      groupCode: GroupCode,
+      frequencies: Array<Record<string, unknown>> = [
+        {
+          frequency: 1,
+          allowedRecurrenceTypes: [TreatmentRecurrence.DAILY],
+          steps: [
+            {
+              doseLabel: 'D1',
+              anchor: ClinicalAnchor.CAFE,
+              offsetMinutes: 0,
+            },
+          ],
+        },
+      ],
+    ) => ({
+      id: `${code}-id`,
+      code,
+      name: `${code} antigo`,
+      description: 'Versão antiga do seed.',
+      priority: 99,
+      isDefault: false,
+      active: true,
+      group: { code: groupCode },
+      frequencies,
+      interactionRules: [],
+    });
+
+    const existingMedications = [
+      {
+        id: 'alendronato-id',
+        commercialName: 'ALENDRONATO',
+        activePrinciple: 'Alendronato de sodio',
+        presentation: 'Apresentação antiga',
+        administrationRoute: 'VO',
+        usageInstructions: 'Uso antigo.',
+        isOphthalmic: false,
+        isOtic: false,
+        isContraceptiveMonthly: false,
+        requiresGlycemiaScale: false,
+        supportsManualAdjustment: false,
+        protocols: [
+          buildProtocol('GROUP_II_BIFOS_STANDARD', GroupCode.GROUP_II_BIFOS),
+          buildProtocol('CUSTOM_FASTING_PROTOCOL', GroupCode.GROUP_II_BIFOS),
+        ],
+      },
+      {
+        id: 'losartana-id',
+        commercialName: 'LOSARTANA',
+        activePrinciple: 'Losartana potassica',
+        presentation: 'Comprimido revestido',
+        administrationRoute: 'VO',
+        usageInstructions: 'Conforme prescricao.',
+        protocols: [
+          buildProtocol('GROUP_I_STANDARD', GroupCode.GROUP_I, [
+            { frequency: 1, steps: [{ doseLabel: 'D1', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 }] },
+            { frequency: 2, steps: [{ doseLabel: 'D1', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 }] },
+            { frequency: 3, steps: [{ doseLabel: 'D1', anchor: ClinicalAnchor.CAFE, offsetMinutes: 0 }] },
+          ]),
+        ],
+      },
+      {
+        id: 'xalacom-id',
+        commercialName: 'XALACOM',
+        activePrinciple: 'Latanoprosta + Timolol',
+        presentation: 'Frasco 2,5 ml',
+        administrationRoute: 'OCULAR',
+        usageInstructions: 'Uso antigo.',
+        isOphthalmic: false,
+        isOtic: false,
+        protocols: [buildProtocol('DELTA_OCULAR_BEDTIME', GroupCode.GROUP_DELTA)],
+      },
+      {
+        id: 'otociriax-id',
+        commercialName: 'OTOCIRIAX',
+        activePrinciple: 'Ciprofloxacino + Hidrocortisona',
+        presentation: 'Frasco 5 ml',
+        administrationRoute: 'OTOLÓGICA',
+        usageInstructions: 'Uso antigo.',
+        isOphthalmic: false,
+        isOtic: false,
+        protocols: [buildProtocol('DELTA_OTICO_12H', GroupCode.GROUP_DELTA)],
+      },
+      {
+        id: 'perlutan-id',
+        commercialName: 'PERLUTAN',
+        activePrinciple: 'Algestona acetofenida + Enantato de estradiol',
+        presentation: 'Ampola 1 ml',
+        administrationRoute: 'IM',
+        usageInstructions: 'Uso antigo.',
+        isContraceptiveMonthly: false,
+        protocols: [buildProtocol('DELTA_PERLUTAN_MONTHLY', GroupCode.GROUP_DELTA)],
+      },
+    ];
+
+    groupRepository.find.mockResolvedValue(allGroups);
+    medicationRepository.find.mockResolvedValue(existingMedications);
+
+    await service.seedCatalog();
+
+    const savedExistingMedications = medicationRepository.save.mock.calls
+      .map((call) => call[0])
+      .filter((saved) => !Array.isArray(saved) && saved.id);
+    const savedById = new Map(
+      savedExistingMedications.map((medication) => [medication.id, medication]),
+    );
+
+    const alendronato = savedById.get('alendronato-id');
+    const bifosProtocol = alendronato.protocols.find(
+      (protocol) => protocol.code === 'GROUP_II_BIFOS_STANDARD',
+    );
+    expect(alendronato.protocols.map((protocol) => protocol.code)).toContain(
+      'CUSTOM_FASTING_PROTOCOL',
+    );
+    expect(bifosProtocol.frequencies).toHaveLength(1);
+    expect(bifosProtocol.frequencies[0]).toMatchObject({
+      frequency: 1,
+      label: '1x por semana',
+      allowedRecurrenceTypes: [
+        TreatmentRecurrence.DAILY,
+        TreatmentRecurrence.WEEKLY,
+      ],
+    });
+    expect(bifosProtocol.frequencies[0].steps).toEqual([
+      expect.objectContaining({
+        anchor: ClinicalAnchor.ACORDAR,
+        offsetMinutes: -60,
+      }),
+    ]);
+
+    const groupIProtocol = savedById
+      .get('losartana-id')
+      .protocols.find((protocol) => protocol.code === 'GROUP_I_STANDARD');
+    expect(groupIProtocol.frequencies.map((frequency) => frequency.frequency)).toEqual([
+      1,
+      2,
+      3,
+      4,
+    ]);
+    expect(
+      groupIProtocol.frequencies.find((frequency) => frequency.frequency === 4),
+    ).toMatchObject({
+      allowedRecurrenceTypes: [
+        TreatmentRecurrence.DAILY,
+        TreatmentRecurrence.PRN,
+      ],
+      allowsPrn: true,
+    });
+
+    expect(savedById.get('xalacom-id')).toMatchObject({ isOphthalmic: true });
+    expect(savedById.get('otociriax-id')).toMatchObject({ isOtic: true });
+    expect(savedById.get('perlutan-id')).toMatchObject({
+      isContraceptiveMonthly: true,
+    });
+    expect(
+      savedById
+        .get('perlutan-id')
+        .protocols.find((protocol) => protocol.code === 'DELTA_PERLUTAN_MONTHLY')
+        .frequencies[0],
+    ).toMatchObject({
+      allowedRecurrenceTypes: [TreatmentRecurrence.MONTHLY],
+    });
+  });
 });
