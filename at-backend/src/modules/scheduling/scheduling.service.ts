@@ -1,39 +1,54 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
-import { ClinicalAnchor } from '../../common/enums/clinical-anchor.enum';
-import { ClinicalInteractionType } from '../../common/enums/clinical-interaction-type.enum';
-import { ClinicalResolutionType } from '../../common/enums/clinical-resolution-type.enum';
-import { ClinicalSemanticTag } from '../../common/enums/clinical-semantic-tag.enum';
-import { OcularLaterality } from '../../common/enums/ocular-laterality.enum';
-import { OticLaterality } from '../../common/enums/otic-laterality.enum';
-import { PrnReason } from '../../common/enums/prn-reason.enum';
-import { ScheduleStatus } from '../../common/enums/schedule-status.enum';
-import { TreatmentRecurrence } from '../../common/enums/treatment-recurrence.enum';
-import { MonthlySpecialReference } from '../../common/enums/monthly-special-reference.enum';
-import { calculateEndDate } from '../../common/utils/treatment-window.util';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { InjectRepository } from "@nestjs/typeorm";
+import { EntityManager, Repository } from "typeorm";
+import { ClinicalAnchor } from "../../common/enums/clinical-anchor.enum";
+import { ClinicalInteractionType } from "../../common/enums/clinical-interaction-type.enum";
+import { ClinicalResolutionType } from "../../common/enums/clinical-resolution-type.enum";
+import { ClinicalSemanticTag } from "../../common/enums/clinical-semantic-tag.enum";
+import { OcularLaterality } from "../../common/enums/ocular-laterality.enum";
+import { OticLaterality } from "../../common/enums/otic-laterality.enum";
+import { PrnReason } from "../../common/enums/prn-reason.enum";
+import { ScheduleStatus } from "../../common/enums/schedule-status.enum";
+import { TreatmentRecurrence } from "../../common/enums/treatment-recurrence.enum";
+import { MonthlySpecialReference } from "../../common/enums/monthly-special-reference.enum";
+import { calculateEndDate } from "../../common/utils/treatment-window.util";
 import {
   formatMinuteIndex,
   minutesToHhmm,
   normalizeClockSequence,
   normalizeRoutineTimeline,
-} from '../../common/utils/time.util';
-import { PatientService } from '../patients/patient.service';
-import { PatientRoutine } from '../patients/entities/patient-routine.entity';
-import { PatientPrescriptionMedication } from '../patient-prescriptions/entities/patient-prescription-medication.entity';
-import { PatientPrescriptionPhase } from '../patient-prescriptions/entities/patient-prescription-phase.entity';
-import { PatientPrescription } from '../patient-prescriptions/entities/patient-prescription.entity';
-import { ConflictResolutionService, ConflictEntryLike } from './services/conflict-resolution.service';
+} from "../../common/utils/time.util";
+import { PatientService } from "../patients/patient.service";
+import { PatientRoutine } from "../patients/entities/patient-routine.entity";
+import { PatientPrescriptionMedication } from "../patient-prescriptions/entities/patient-prescription-medication.entity";
+import { PatientPrescriptionPhase } from "../patient-prescriptions/entities/patient-prescription-phase.entity";
+import { PatientPrescription } from "../patient-prescriptions/entities/patient-prescription.entity";
+import {
+  ConflictResolutionService,
+  ConflictEntryLike,
+} from "./services/conflict-resolution.service";
 import {
   FaixaEscalaGlicemicaDto,
   ConflitoAgendamentoDto,
   ContextoHorarioAgendadoDto,
-  ScheduleEntryDto,
-  ScheduledPhaseDto,
-  SchedulingResultDto,
-} from './dto/schedule-response.dto';
-import { ScheduledDose } from './entities/scheduled-dose.entity';
-import { SchedulingRulesService } from './services/scheduling-rules.service';
+} from "./dto/schedule-response.dto";
+import {
+  CalendarDocumentHeaderDto,
+  CalendarScheduleDoseDto,
+  CalendarScheduleItemDto,
+  CalendarScheduleResponseDto,
+} from "./dto/calendar-schedule-response.dto";
+import { ScheduledDose } from "./entities/scheduled-dose.entity";
+import { SchedulingRulesService } from "./services/scheduling-rules.service";
+import {
+  CalendarDocumentHeaderConfig,
+  buildCalendarDocumentHeaderConfig,
+} from "./config/calendar-document-header.config";
 
 type ScheduleAnchors = Record<ClinicalAnchor, number>;
 interface PhaseWindow {
@@ -88,6 +103,8 @@ interface WorkingEntry extends ConflictEntryLike {
 
 @Injectable()
 export class SchedulingService {
+  private readonly calendarDocumentHeaderConfig: CalendarDocumentHeaderConfig;
+
   constructor(
     @InjectRepository(ScheduledDose)
     private readonly scheduledDoseRepository: Repository<ScheduledDose>,
@@ -96,14 +113,19 @@ export class SchedulingService {
     private readonly patientService: PatientService,
     private readonly rulesService: SchedulingRulesService,
     private readonly conflictResolutionService: ConflictResolutionService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.calendarDocumentHeaderConfig =
+      buildCalendarDocumentHeaderConfig(configService);
+  }
 
   async buildAndPersistSchedule(
     prescription: PatientPrescription,
     entityManager?: EntityManager,
-  ): Promise<SchedulingResultDto> {
+  ): Promise<CalendarScheduleResponseDto> {
     const generationDate = new Date();
-    const scheduleContext = await this.resolveScheduleContextForBuild(prescription);
+    const scheduleContext =
+      await this.resolveScheduleContextForBuild(prescription);
     let entries = this.buildBaseEntries(prescription, scheduleContext.anchors);
     entries = this.applyConflictRules(entries);
     entries = entries.map((entry) => ({
@@ -117,7 +139,11 @@ export class SchedulingService {
     }));
     entries = this.sortEntries(entries);
 
-    const persisted = await this.persistSchedule(prescription, entries, entityManager);
+    const persisted = await this.persistSchedule(
+      prescription,
+      entries,
+      entityManager,
+    );
     return this.mapSchedulingResult(
       prescription,
       persisted,
@@ -126,30 +152,44 @@ export class SchedulingService {
     );
   }
 
-  async getScheduleByPrescription(prescriptionId: string): Promise<SchedulingResultDto> {
+  async getScheduleByPrescription(
+    prescriptionId: string,
+  ): Promise<CalendarScheduleResponseDto> {
     const generationDate = new Date();
     const prescription = await this.prescriptionRepository.findOne({
       where: { id: prescriptionId },
-      relations: ['patient', 'patient.routines', 'medications', 'medications.phases'],
+      relations: [
+        "patient",
+        "patient.routines",
+        "medications",
+        "medications.phases",
+      ],
     });
     if (!prescription) {
-      throw new NotFoundException('Prescrição do paciente não encontrada.');
+      throw new NotFoundException("Prescrição do paciente não encontrada.");
     }
     const routine = this.resolveActiveRoutineFromPatient(prescription);
 
     const scheduledDoses = await this.scheduledDoseRepository.find({
       where: { prescription: { id: prescriptionId } },
-      relations: ['prescriptionMedication', 'phase'],
-      order: { phaseOrder: 'ASC', timeInMinutes: 'ASC' },
+      relations: ["prescriptionMedication", "phase"],
+      order: { phaseOrder: "ASC", timeInMinutes: "ASC" },
     });
 
-    return this.mapSchedulingResult(prescription, scheduledDoses, routine, generationDate);
+    return this.mapSchedulingResult(
+      prescription,
+      scheduledDoses,
+      routine,
+      generationDate,
+    );
   }
 
   private async resolveScheduleContextForBuild(
     prescription: PatientPrescription,
   ): Promise<ScheduleContext> {
-    const routine = await this.patientService.getActiveRoutine(prescription.patient.id);
+    const routine = await this.patientService.getActiveRoutine(
+      prescription.patient.id,
+    );
     return {
       routine,
       anchors: this.toScheduleAnchors(routine),
@@ -157,7 +197,10 @@ export class SchedulingService {
   }
 
   private toScheduleAnchors(
-    routine: Pick<PatientRoutine, 'acordar' | 'cafe' | 'almoco' | 'lanche' | 'jantar' | 'dormir'>,
+    routine: Pick<
+      PatientRoutine,
+      "acordar" | "cafe" | "almoco" | "lanche" | "jantar" | "dormir"
+    >,
   ): ScheduleAnchors {
     const timeline = normalizeRoutineTimeline({
       acordar: routine.acordar,
@@ -179,21 +222,27 @@ export class SchedulingService {
     };
   }
 
-  private resolveActiveRoutineFromPatient(prescription: PatientPrescription): PatientRoutine {
+  private resolveActiveRoutineFromPatient(
+    prescription: PatientPrescription,
+  ): PatientRoutine {
     const activeRoutines = (prescription.patient.routines ?? [])
       .filter((routine) => routine.active)
       .sort((left, right) => {
-        const leftDate = left.createdAt ? new Date(left.createdAt).getTime() : 0;
-        const rightDate = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        const leftDate = left.createdAt
+          ? new Date(left.createdAt).getTime()
+          : 0;
+        const rightDate = right.createdAt
+          ? new Date(right.createdAt).getTime()
+          : 0;
         return rightDate - leftDate || right.id.localeCompare(left.id);
       });
 
     if (activeRoutines.length === 0) {
-      throw new NotFoundException('Rotina ativa do paciente não encontrada.');
+      throw new NotFoundException("Rotina ativa do paciente não encontrada.");
     }
     if (activeRoutines.length > 1) {
       throw new ConflictException(
-        'Paciente com múltiplas rotinas ativas. Corrija a consistência da base.',
+        "Paciente com múltiplas rotinas ativas. Corrija a consistência da base.",
       );
     }
 
@@ -205,7 +254,11 @@ export class SchedulingService {
     anchors: ScheduleAnchors,
   ): WorkingEntry[] {
     const phases = [...prescription.medications]
-      .sort((a, b) => a.medicationSnapshot.activePrinciple.localeCompare(b.medicationSnapshot.activePrinciple))
+      .sort((a, b) =>
+        a.medicationSnapshot.activePrinciple.localeCompare(
+          b.medicationSnapshot.activePrinciple,
+        ),
+      )
       .flatMap((medication) =>
         [...medication.phases]
           .sort((a, b) => a.phaseOrder - b.phaseOrder)
@@ -215,7 +268,11 @@ export class SchedulingService {
               medication,
               phase,
               anchors,
-              this.computePhaseWindow(prescription.startedAt, medication, phase),
+              this.computePhaseWindow(
+                prescription.startedAt,
+                medication,
+                phase,
+              ),
             ),
           ),
       );
@@ -228,7 +285,9 @@ export class SchedulingService {
     medication: PatientPrescriptionMedication,
     phase: PatientPrescriptionPhase,
   ): PhaseWindow {
-    const sorted = [...medication.phases].sort((a, b) => a.phaseOrder - b.phaseOrder);
+    const sorted = [...medication.phases].sort(
+      (a, b) => a.phaseOrder - b.phaseOrder,
+    );
     let currentStart = prescriptionStartDate;
     for (const currentPhase of sorted) {
       const currentEnd = currentPhase.continuousUse
@@ -266,7 +325,7 @@ export class SchedulingService {
           timeInMinutes,
           0,
           phaseWindow,
-          'Horário definido manualmente.',
+          "Horário definido manualmente.",
         ),
       );
     }
@@ -328,11 +387,17 @@ export class SchedulingService {
       administrationUnit: administration.administrationUnit,
       administrationLabel: administration.administrationLabel,
       recurrenceType: phase.recurrenceType,
-      recurrenceLabel: formatRecurrenceLabel(phase.recurrenceType, phaseWindow.startDate, phaseWindow.endDate, phase),
+      recurrenceLabel: formatRecurrenceLabel(
+        phase.recurrenceType,
+        phaseWindow.startDate,
+        phaseWindow.endDate,
+        phase,
+      ),
       startDate: phaseWindow.startDate,
       endDate: phaseWindow.endDate,
       weeklyDay: phase.weeklyDay,
-      monthlyRule: monthlySpecialRule?.descricao_regra_mensal ?? phase.monthlyRule,
+      monthlyRule:
+        monthlySpecialRule?.descricao_regra_mensal ?? phase.monthlyRule,
       monthlyDay: monthlySpecialRule ? undefined : phase.monthlyDay,
       monthlySpecialReference: monthlySpecialRule?.regra_mensal_especial_codigo,
       monthlySpecialBaseDate: monthlySpecialRule?.data_base_clinica,
@@ -347,7 +412,7 @@ export class SchedulingService {
         phase.recurrenceType === TreatmentRecurrence.PRN
           ? phase.prnReason
             ? `Uso se necessario em caso de ${toPrnReasonLabel(phase.prnReason)}.`
-            : 'Uso se necessario.'
+            : "Uso se necessario."
           : undefined,
       timeInMinutes,
       timeFormatted: formatMinuteIndex(timeInMinutes),
@@ -414,7 +479,8 @@ export class SchedulingService {
     entityManager?: EntityManager,
   ): Promise<ScheduledDose[]> {
     const scheduledDoseRepository =
-      entityManager?.getRepository(ScheduledDose) ?? this.scheduledDoseRepository;
+      entityManager?.getRepository(ScheduledDose) ??
+      this.scheduledDoseRepository;
 
     await scheduledDoseRepository.delete({
       prescription: { id: prescription.id },
@@ -470,47 +536,46 @@ export class SchedulingService {
     doses: ScheduledDose[],
     routine: PatientRoutine,
     generationDate: Date,
-  ): SchedulingResultDto {
+  ): CalendarScheduleResponseDto {
     const medications = [...prescription.medications].sort((a, b) => {
-      const leftName = a.medicationSnapshot.commercialName ?? a.medicationSnapshot.activePrinciple;
-      const rightName = b.medicationSnapshot.commercialName ?? b.medicationSnapshot.activePrinciple;
+      const leftName =
+        a.medicationSnapshot.commercialName ??
+        a.medicationSnapshot.activePrinciple;
+      const rightName =
+        b.medicationSnapshot.commercialName ??
+        b.medicationSnapshot.activePrinciple;
       return leftName.localeCompare(rightName) || a.id.localeCompare(b.id);
     });
 
     return {
-      paciente_id: prescription.patient.id,
-      prescricao_id: prescription.id,
-      paciente: this.mapPatientHeader(prescription, generationDate),
-      rotina: this.mapRoutineHeader(routine),
-      data_inicio_prescricao: toPtBrDate(prescription.startedAt),
-      data_geracao_schedule: toPtBrDateFromDate(generationDate),
-      medicamentos: medications.map((medication) => ({
-        prescription_medication_id: medication.id,
-        nome_medicamento:
-          medication.medicationSnapshot.commercialName ??
-          medication.medicationSnapshot.activePrinciple,
-        principio_ativo: medication.medicationSnapshot.activePrinciple,
-        apresentacao: medication.medicationSnapshot.presentation,
-        forma_farmaceutica: medication.medicationSnapshot.pharmaceuticalForm ?? null,
-        via_administracao: medication.medicationSnapshot.administrationRoute,
-        orientacoes_uso: medication.medicationSnapshot.usageInstructions,
-        grupo_codigo: medication.protocolSnapshot.groupCode,
-        grupo_label: toGroupLabel(medication.protocolSnapshot.groupCode),
-        protocolo_codigo: medication.protocolSnapshot.code,
-        protocolo_nome: medication.protocolSnapshot.name ?? null,
-        protocolo_descricao: medication.protocolSnapshot.description ?? null,
-        fases: this.mapPhases(medication, doses),
-      })),
+      documentHeader: this.mapDocumentHeader(),
+      patient: this.mapPatientHeader(prescription, generationDate),
+      routine: this.mapRoutineHeader(routine),
+      scheduleItems: medications.flatMap((medication) =>
+        this.mapScheduleItems(medication, doses),
+      ),
+    };
+  }
+
+  private mapDocumentHeader(): CalendarDocumentHeaderDto {
+    return {
+      nomeEmpresa: this.calendarDocumentHeaderConfig.companyName,
+      cnpj: this.calendarDocumentHeaderConfig.cnpj,
+      telefone: this.calendarDocumentHeaderConfig.phone,
+      email: this.calendarDocumentHeaderConfig.email,
+      farmaceuticoNome: this.calendarDocumentHeaderConfig.pharmacistName,
+      farmaceuticoCrf: this.calendarDocumentHeaderConfig.pharmacistCrf,
     };
   }
 
   private mapPatientHeader(
     prescription: PatientPrescription,
     generationDate: Date,
-  ): SchedulingResultDto['paciente'] {
+  ): CalendarScheduleResponseDto["patient"] {
     return {
-      nome_completo: prescription.patient.fullName,
-      data_nascimento: toPtBrDate(prescription.patient.birthDate),
+      id: prescription.patient.id,
+      nome: prescription.patient.fullName,
+      dataNascimento: toPtBrDate(prescription.patient.birthDate),
       idade: calculateAge(prescription.patient.birthDate, generationDate),
       rg: prescription.patient.rg ?? null,
       cpf: prescription.patient.cpf ?? null,
@@ -518,7 +583,9 @@ export class SchedulingService {
     };
   }
 
-  private mapRoutineHeader(routine: PatientRoutine): SchedulingResultDto['rotina'] {
+  private mapRoutineHeader(
+    routine: PatientRoutine,
+  ): CalendarScheduleResponseDto["routine"] {
     return {
       acordar: routine.acordar,
       cafe: routine.cafe,
@@ -529,10 +596,10 @@ export class SchedulingService {
     };
   }
 
-  private mapPhases(
+  private mapScheduleItems(
     medication: PatientPrescriptionMedication,
     doses: ScheduledDose[],
-  ): ScheduledPhaseDto[] {
+  ): CalendarScheduleItemDto[] {
     return [...medication.phases]
       .sort((a, b) => a.phaseOrder - b.phaseOrder)
       .map((phase) => {
@@ -543,114 +610,92 @@ export class SchedulingService {
               dose.phase.id === phase.id,
           )
           .sort((a, b) => a.timeInMinutes - b.timeInMinutes);
-        const escala_glicemica = toGlycemiaScaleRanges(phase.glycemiaScaleRanges);
-        const escala_glicemica_label = toGlycemiaScaleLabel(escala_glicemica);
-        const monthlySpecialRule = toMonthlySpecialRule(phase);
-
-        const phaseEntries = phaseDoses.map((dose): ScheduleEntryDto => {
-            const recorrencia_label = formatRecurrenceLabel(
-              phase.recurrenceType,
-              dose.startDate,
-              dose.endDate,
-              phase,
-            );
-            const lateralidade_ocular_codigo = phase.ocularLaterality ?? null;
-            const lateralidade_otologica_codigo = phase.oticLaterality ?? null;
-            const lateralidade_ocular_label = toOcularLateralityLabel(lateralidade_ocular_codigo);
-            const lateralidade_otologica_label =
-              toOticLateralityLabel(lateralidade_otologica_codigo);
-            const via_administracao_label = toViaAdministracaoLabel(
-              medication.medicationSnapshot.administrationRoute,
-              lateralidade_ocular_label,
-              lateralidade_otologica_label,
-            );
-            const conflito = this.mapConflito(dose);
-            const contexto_horario: ContextoHorarioAgendadoDto = {
-              ancora: dose.anchor ?? null,
-              ancora_horario_minutos: dose.anchorTimeInMinutes ?? null,
-              deslocamento_minutos: dose.offsetMinutes ?? null,
-              tag_semantica: dose.semanticTag ?? null,
-              horario_original_minutos: dose.originalTimeInMinutes,
-              horario_original: dose.originalTimeFormatted,
-              horario_resolvido_minutos: dose.timeInMinutes,
-              horario_resolvido: dose.timeFormatted,
-            };
-            return {
-              prescription_medication_id: dose.prescriptionMedication.id,
-              phase_id: dose.phase.id,
-              dose_horario_label: dose.doseLabel,
-              dose_valor: dose.administrationValue ?? null,
-              dose_unidade: dose.administrationUnit ?? null,
-              dose_exibicao: dose.administrationLabel ?? dose.doseLabel,
-              horario: dose.timeFormatted,
-              recorrencia_codigo: dose.recurrenceType ?? null,
-              recorrencia_label,
-              dia_semanal: dose.weeklyDay ?? null,
-              regra_mensal: monthlySpecialRule?.descricao_regra_mensal ?? dose.monthlyRule ?? null,
-              dia_mensal: monthlySpecialRule ? null : dose.monthlyDay ?? null,
-              regra_mensal_especial_codigo:
-                monthlySpecialRule?.regra_mensal_especial_codigo ?? null,
-              regra_mensal_especial_label:
-                monthlySpecialRule?.regra_mensal_especial_label ?? null,
-              data_base_clinica: monthlySpecialRule?.data_base_clinica ?? null,
-              deslocamento_dias: monthlySpecialRule?.deslocamento_dias ?? null,
-              data_referencia_regra: monthlySpecialRule?.data_referencia_regra ?? null,
-              descricao_regra_mensal: monthlySpecialRule?.descricao_regra_mensal ?? null,
-              intervalo_dias_alternados: dose.alternateDaysInterval ?? null,
-              uso_continuo: dose.continuousUse,
-              uso_se_necessario: dose.isPrn,
-              motivo_se_necessario: dose.prnReason ?? null,
-              lateralidade_ocular_codigo,
-              lateralidade_ocular_label,
-              lateralidade_otologica_codigo,
-              lateralidade_otologica_label,
-              via_administracao_label,
-              escala_glicemica,
-              escala_glicemica_label,
-              status_codigo: dose.status,
-              status_label: toStatusLabel(dose.status),
-              orientacao_clinica: dose.clinicalInstructionLabel ?? null,
-              observacao: dose.note ?? null,
-              contexto_horario,
-              conflito,
-            };
-          });
-
-        const primeiraDose = phaseDoses[0];
-        const lateralidade_ocular_codigo = phase.ocularLaterality ?? null;
-        const lateralidade_otologica_codigo = phase.oticLaterality ?? null;
-        const lateralidade_ocular_label = toOcularLateralityLabel(lateralidade_ocular_codigo);
-        const lateralidade_otologica_label =
-          toOticLateralityLabel(lateralidade_otologica_codigo);
-        const via_administracao_label = toViaAdministracaoLabel(
+        const firstDose = phaseDoses[0];
+        const ocularLateralityLabel = toOcularLateralityLabel(
+          phase.ocularLaterality ?? null,
+        );
+        const oticLateralityLabel = toOticLateralityLabel(
+          phase.oticLaterality ?? null,
+        );
+        const via = toViaAdministracaoLabel(
           medication.medicationSnapshot.administrationRoute,
-          lateralidade_ocular_label,
-          lateralidade_otologica_label,
+          ocularLateralityLabel,
+          oticLateralityLabel,
+        );
+        const glycemiaScaleLabel = toGlycemiaScaleLabel(
+          toGlycemiaScaleRanges(phase.glycemiaScaleRanges),
         );
 
         return {
-          phase_id: phase.id,
-          fase_ordem: phase.phaseOrder,
-          fase_label: `Posologia ${phase.phaseOrder}`,
-          data_inicio: toPtBrDate(primeiraDose?.startDate),
-          data_fim: toPtBrDate(primeiraDose?.endDate),
-          uso_continuo: phase.continuousUse,
-          regra_mensal_especial_codigo: monthlySpecialRule?.regra_mensal_especial_codigo ?? null,
-          regra_mensal_especial_label: monthlySpecialRule?.regra_mensal_especial_label ?? null,
-          data_base_clinica: monthlySpecialRule?.data_base_clinica ?? null,
-          deslocamento_dias: monthlySpecialRule?.deslocamento_dias ?? null,
-          data_referencia_regra: monthlySpecialRule?.data_referencia_regra ?? null,
-          descricao_regra_mensal: monthlySpecialRule?.descricao_regra_mensal ?? null,
-          lateralidade_ocular_codigo,
-          lateralidade_ocular_label,
-          lateralidade_otologica_codigo,
-          lateralidade_otologica_label,
-          via_administracao_label,
-          escala_glicemica,
-          escala_glicemica_label,
-          entradas: phaseEntries,
+          prescriptionMedicationId: medication.id,
+          phaseOrder: phase.phaseOrder,
+          medicamento:
+            medication.medicationSnapshot.commercialName ??
+            medication.medicationSnapshot.activePrinciple,
+          principioAtivo: medication.medicationSnapshot.activePrinciple,
+          apresentacao: medication.medicationSnapshot.presentation,
+          formaFarmaceutica:
+            medication.medicationSnapshot.pharmaceuticalForm ?? null,
+          via,
+          modoUso: buildModeOfUse(
+            medication.medicationSnapshot.usageInstructions,
+            phase,
+            ocularLateralityLabel,
+            oticLateralityLabel,
+          ),
+          recorrenciaTexto: formatCalendarRecurrenceText(phase),
+          inicio: toPtBrDate(firstDose?.startDate),
+          termino: toPtBrDate(firstDose?.endDate),
+          status: this.resolveScheduleItemStatus(phaseDoses),
+          observacoes: buildItemObservations(phaseDoses, glycemiaScaleLabel),
+          doses: phaseDoses.map((dose) => this.mapScheduleDose(dose)),
         };
       });
+  }
+
+  private mapScheduleDose(dose: ScheduledDose): CalendarScheduleDoseDto {
+    return {
+      label: dose.doseLabel,
+      horario: dose.timeFormatted,
+      doseValor: dose.administrationValue ?? null,
+      doseUnidade: dose.administrationUnit ?? null,
+      doseExibicao: dose.administrationLabel ?? dose.doseLabel,
+      status: dose.status as ScheduleStatus,
+      statusLabel: toStatusLabel(dose.status),
+      observacao: dose.note ?? null,
+      contextoHorario: this.mapTimeContext(dose),
+      conflito: this.mapConflito(dose),
+    };
+  }
+
+  private mapTimeContext(dose: ScheduledDose): ContextoHorarioAgendadoDto {
+    return {
+      ancora: dose.anchor ?? null,
+      ancora_horario_minutos: dose.anchorTimeInMinutes ?? null,
+      deslocamento_minutos: dose.offsetMinutes ?? null,
+      tag_semantica: dose.semanticTag ?? null,
+      horario_original_minutos: dose.originalTimeInMinutes,
+      horario_original: dose.originalTimeFormatted,
+      horario_resolvido_minutos: dose.timeInMinutes,
+      horario_resolvido: dose.timeFormatted,
+    };
+  }
+
+  private resolveScheduleItemStatus(doses: ScheduledDose[]): string {
+    if (
+      doses.some(
+        (dose) => dose.status === ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED,
+      )
+    ) {
+      return toStatusLabel(ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED);
+    }
+    if (
+      doses.length > 0 &&
+      doses.every((dose) => dose.status === ScheduleStatus.INACTIVE)
+    ) {
+      return toStatusLabel(ScheduleStatus.INACTIVE);
+    }
+    return toStatusLabel(ScheduleStatus.ACTIVE);
   }
 
   private mapConflito(dose: ScheduledDose): ConflitoAgendamentoDto | null {
@@ -684,45 +729,168 @@ function formatRecurrenceLabel(
   }
 
   if (phase.continuousUse) {
-    return 'Uso contínuo';
+    return "Uso contínuo";
   }
 
   switch (recurrenceType) {
     case TreatmentRecurrence.WEEKLY:
-      return phase.weeklyDay ? `Semanal em ${phase.weeklyDay}` : 'Semanal';
+      return phase.weeklyDay ? `Semanal em ${phase.weeklyDay}` : "Semanal";
     case TreatmentRecurrence.MONTHLY:
       if (phase.monthlyDay) return `Mensal no dia ${phase.monthlyDay}`;
-      return phase.monthlyRule ? `Mensal: ${phase.monthlyRule}` : 'Mensal';
+      return phase.monthlyRule ? `Mensal: ${phase.monthlyRule}` : "Mensal";
     case TreatmentRecurrence.ALTERNATE_DAYS:
       return `A cada ${phase.alternateDaysInterval ?? 2} dias`;
     case TreatmentRecurrence.PRN:
       return phase.prnReason
         ? `Se necessário: ${toPrnReasonLabel(phase.prnReason)}`
-        : 'Se necessário';
+        : "Se necessário";
     case TreatmentRecurrence.DAILY:
     default:
-      if (!startDate) return 'Diário';
-      return endDate ? 'Diário' : phase.continuousUse ? 'Uso contínuo' : 'Diário';
+      if (!startDate) return "Diário";
+      return endDate
+        ? "Diário"
+        : phase.continuousUse
+          ? "Uso contínuo"
+          : "Diário";
   }
+}
+
+function formatCalendarRecurrenceText(phase: PatientPrescriptionPhase): string {
+  if (phase.recurrenceType === TreatmentRecurrence.MONTHLY) {
+    const monthlySpecialRule = toMonthlySpecialRule(phase);
+    if (monthlySpecialRule) return monthlySpecialRule.descricao_regra_mensal;
+  }
+
+  if (phase.continuousUse) {
+    return "Uso contínuo";
+  }
+
+  switch (phase.recurrenceType) {
+    case TreatmentRecurrence.WEEKLY:
+      return phase.weeklyDay
+        ? `Semanal: ${formatWeeklyDayForDisplay(phase.weeklyDay)}`
+        : "Semanal";
+    case TreatmentRecurrence.MONTHLY:
+      if (phase.monthlyDay !== undefined) {
+        return `Mensal: dia ${String(phase.monthlyDay).padStart(2, "0")}`;
+      }
+      return phase.monthlyRule ? `Mensal: ${phase.monthlyRule}` : "Mensal";
+    case TreatmentRecurrence.ALTERNATE_DAYS:
+      return `A cada ${phase.alternateDaysInterval ?? 2} dias`;
+    case TreatmentRecurrence.PRN:
+      return phase.prnReason
+        ? `Em caso de ${toPrnReasonLabel(phase.prnReason)}`
+        : "Sob demanda";
+    case TreatmentRecurrence.DAILY:
+    default:
+      return "Diário";
+  }
+}
+
+function formatWeeklyDayForDisplay(weeklyDay: string): string {
+  const normalized = normalizeWeekdayToken(weeklyDay);
+  switch (normalized) {
+    case "MONDAY":
+      return "segunda-feira";
+    case "TUESDAY":
+      return "terça-feira";
+    case "WEDNESDAY":
+      return "quarta-feira";
+    case "THURSDAY":
+      return "quinta-feira";
+    case "FRIDAY":
+      return "sexta-feira";
+    case "SATURDAY":
+      return "sábado";
+    case "SUNDAY":
+      return "domingo";
+    default:
+      return weeklyDay.trim().toLowerCase();
+  }
+}
+
+function normalizeWeekdayToken(weeklyDay: string): string {
+  switch (weeklyDay.trim().toUpperCase()) {
+    case "SEGUNDA":
+      return "MONDAY";
+    case "TERCA":
+      return "TUESDAY";
+    case "QUARTA":
+      return "WEDNESDAY";
+    case "QUINTA":
+      return "THURSDAY";
+    case "SEXTA":
+      return "FRIDAY";
+    case "SABADO":
+      return "SATURDAY";
+    case "DOMINGO":
+      return "SUNDAY";
+    default:
+      return weeklyDay.trim().toUpperCase();
+  }
+}
+
+function buildModeOfUse(
+  usageInstructions: string | undefined,
+  phase: PatientPrescriptionPhase,
+  ocularLateralityLabel: string | null,
+  oticLateralityLabel: string | null,
+): string {
+  const fragments = [usageInstructions?.trim()];
+
+  if (ocularLateralityLabel) {
+    fragments.push(
+      ocularLateralityLabel === "ambos os olhos"
+        ? "Aplicar em ambos os olhos."
+        : `Aplicar no ${ocularLateralityLabel}.`,
+    );
+  }
+
+  if (oticLateralityLabel) {
+    fragments.push(
+      oticLateralityLabel === "nas 2 orelhas"
+        ? "Aplicar nas 2 orelhas."
+        : `Aplicar na ${oticLateralityLabel}.`,
+    );
+  }
+
+  if (phase.manualAdjustmentEnabled && phase.manualTimes?.length) {
+    fragments.push("Horários definidos manualmente.");
+  }
+
+  return uniqueStrings(fragments).join(" ").trim() || "Conforme prescrição.";
+}
+
+function buildItemObservations(
+  doses: ScheduledDose[],
+  glycemiaScaleLabel: string | null,
+): string[] {
+  return uniqueStrings([...doses.map((dose) => dose.note), glycemiaScaleLabel]);
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return [
+    ...new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => !!value),
+    ),
+  ];
 }
 
 function toPtBrDate(dateString: string | undefined): string | null {
   if (!dateString) return null;
-  const [year, month, day] = dateString.split('-');
+  const [year, month, day] = dateString.split("-");
   if (!year || !month || !day) return null;
   return `${day}/${month}/${year}`;
 }
 
-function toPtBrDateFromDate(date: Date): string {
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = String(date.getFullYear());
-  return `${day}/${month}/${year}`;
-}
-
-function calculateAge(birthDate: string | undefined, referenceDate: Date): number | null {
+function calculateAge(
+  birthDate: string | undefined,
+  referenceDate: Date,
+): number | null {
   if (!birthDate) return null;
-  const [yearRaw, monthRaw, dayRaw] = birthDate.split('-');
+  const [yearRaw, monthRaw, dayRaw] = birthDate.split("-");
   const birthYear = Number(yearRaw);
   const birthMonth = Number(monthRaw);
   const birthDay = Number(dayRaw);
@@ -735,7 +903,8 @@ function calculateAge(birthDate: string | undefined, referenceDate: Date): numbe
 
   let age = referenceYear - birthYear;
   const hadBirthdayThisYear =
-    referenceMonth > birthMonth || (referenceMonth === birthMonth && referenceDay >= birthDay);
+    referenceMonth > birthMonth ||
+    (referenceMonth === birthMonth && referenceDay >= birthDay);
   if (!hadBirthdayThisYear) age -= 1;
 
   return age >= 0 ? age : null;
@@ -744,87 +913,95 @@ function calculateAge(birthDate: string | undefined, referenceDate: Date): numbe
 function toStatusLabel(status: string): string {
   switch (status) {
     case ScheduleStatus.INACTIVE:
-      return 'Inativo';
+      return "Inativo";
     case ScheduleStatus.MANUAL_ADJUSTMENT_REQUIRED:
-      return 'Ajuste manual necessário';
+      return "Ajuste manual necessário";
     case ScheduleStatus.ACTIVE:
     default:
-      return 'Ativo';
+      return "Ativo";
   }
 }
 
-function toInteractionLabel(interactionType?: ClinicalInteractionType): string | null {
+function toInteractionLabel(
+  interactionType?: ClinicalInteractionType,
+): string | null {
   switch (interactionType) {
     case ClinicalInteractionType.AFFECTED_BY_SALTS:
-      return 'Interferência com sais/antiácidos';
+      return "Interferência com sais/antiácidos";
     case ClinicalInteractionType.AFFECTED_BY_SUCRALFATE:
-      return 'Interferência com sucralfato';
+      return "Interferência com sucralfato";
     case ClinicalInteractionType.AFFECTED_BY_CALCIUM:
-      return 'Interferência com cálcio';
+      return "Interferência com cálcio";
     default:
       return null;
   }
 }
 
-function toResolutionLabel(resolutionType?: ClinicalResolutionType): string | null {
+function toResolutionLabel(
+  resolutionType?: ClinicalResolutionType,
+): string | null {
   switch (resolutionType) {
     case ClinicalResolutionType.INACTIVATE_SOURCE:
-      return 'Inativar dose';
+      return "Inativar dose";
     case ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW:
-      return 'Deslocar dose por janela';
+      return "Deslocar dose por janela";
     case ClinicalResolutionType.REQUIRE_MANUAL_ADJUSTMENT:
-      return 'Exigir ajuste manual';
+      return "Exigir ajuste manual";
     default:
       return null;
   }
 }
 
 function toGroupLabel(groupCode: string): string {
-  if (!groupCode) return 'Grupo';
-  const normalized = groupCode.startsWith('GROUP_')
-    ? groupCode.replace('GROUP_', '')
+  if (!groupCode) return "Grupo";
+  const normalized = groupCode.startsWith("GROUP_")
+    ? groupCode.replace("GROUP_", "")
     : groupCode;
-  return `Grupo ${normalized.split('_').join(' ')}`;
+  return `Grupo ${normalized.split("_").join(" ")}`;
 }
 
 function toPrnReasonLabel(prnReason?: PrnReason): string {
   switch (prnReason) {
     case PrnReason.CRISIS:
-      return 'crise';
+      return "crise";
     case PrnReason.PAIN:
-      return 'dor';
+      return "dor";
     case PrnReason.FEVER:
-      return 'febre';
+      return "febre";
     case PrnReason.NAUSEA_VOMITING:
-      return 'náusea e vômito';
+      return "náusea e vômito";
     case PrnReason.SHORTNESS_OF_BREATH:
-      return 'falta de ar';
+      return "falta de ar";
     default:
-      return 'necessidade clínica';
+      return "necessidade clínica";
   }
 }
 
-function toOcularLateralityLabel(laterality: OcularLaterality | null): string | null {
+function toOcularLateralityLabel(
+  laterality: OcularLaterality | null,
+): string | null {
   switch (laterality) {
     case OcularLaterality.RIGHT_EYE:
-      return 'olho direito';
+      return "olho direito";
     case OcularLaterality.LEFT_EYE:
-      return 'olho esquerdo';
+      return "olho esquerdo";
     case OcularLaterality.BOTH_EYES:
-      return 'ambos os olhos';
+      return "ambos os olhos";
     default:
       return null;
   }
 }
 
-function toOticLateralityLabel(laterality: OticLaterality | null): string | null {
+function toOticLateralityLabel(
+  laterality: OticLaterality | null,
+): string | null {
   switch (laterality) {
     case OticLaterality.RIGHT_EAR:
-      return 'orelha direita';
+      return "orelha direita";
     case OticLaterality.LEFT_EAR:
-      return 'orelha esquerda';
+      return "orelha esquerda";
     case OticLaterality.BOTH_EARS:
-      return 'nas 2 orelhas';
+      return "nas 2 orelhas";
     default:
       return null;
   }
@@ -840,7 +1017,9 @@ function toViaAdministracaoLabel(
   return viaAdministracao;
 }
 
-function toMonthlySpecialRule(phase: PatientPrescriptionPhase): MonthlySpecialRule | null {
+function toMonthlySpecialRule(
+  phase: PatientPrescriptionPhase,
+): MonthlySpecialRule | null {
   if (
     !phase.monthlySpecialReference ||
     !phase.monthlySpecialBaseDate ||
@@ -861,19 +1040,25 @@ function toMonthlySpecialRule(phase: PatientPrescriptionPhase): MonthlySpecialRu
 
   return {
     regra_mensal_especial_codigo: phase.monthlySpecialReference,
-    regra_mensal_especial_label: toMonthlySpecialReferenceLabel(phase.monthlySpecialReference),
+    regra_mensal_especial_label: toMonthlySpecialReferenceLabel(
+      phase.monthlySpecialReference,
+    ),
     data_base_clinica: dataBaseClinica,
     deslocamento_dias: phase.monthlySpecialOffsetDays,
     data_referencia_regra: dataReferenciaRegra,
-    descricao_regra_mensal: toMonthlySpecialDescription(phase.monthlySpecialOffsetDays),
+    descricao_regra_mensal: toMonthlySpecialDescription(
+      phase.monthlySpecialOffsetDays,
+    ),
   };
 }
 
-function toMonthlySpecialReferenceLabel(reference: MonthlySpecialReference): string {
+function toMonthlySpecialReferenceLabel(
+  reference: MonthlySpecialReference,
+): string {
   switch (reference) {
     case MonthlySpecialReference.MENSTRUATION_START:
     default:
-      return 'Início da menstruação';
+      return "Início da menstruação";
   }
 }
 
@@ -882,7 +1067,7 @@ function toMonthlySpecialDescription(offsetDays: number): string {
 }
 
 function toGlycemiaScaleRanges(
-  ranges: PatientPrescriptionPhase['glycemiaScaleRanges'],
+  ranges: PatientPrescriptionPhase["glycemiaScaleRanges"],
 ): FaixaEscalaGlicemicaDto[] | null {
   if (!ranges?.length) return null;
   return [...ranges]
@@ -896,17 +1081,19 @@ function toGlycemiaScaleRanges(
     }));
 }
 
-function toGlycemiaScaleLabel(ranges: FaixaEscalaGlicemicaDto[] | null): string | null {
+function toGlycemiaScaleLabel(
+  ranges: FaixaEscalaGlicemicaDto[] | null,
+): string | null {
   if (!ranges?.length) return null;
-  return ranges.map((range) => range.label_clinico).join(' ');
+  return ranges.map((range) => range.label_clinico).join(" ");
 }
 
 function shiftDateByDays(dateString: string, days: number): string {
-  const [year, month, day] = dateString.split('-').map(Number);
+  const [year, month, day] = dateString.split("-").map(Number);
   const date = new Date(year, month - 1, day);
   date.setDate(date.getDate() + days);
   const resultYear = String(date.getFullYear());
-  const resultMonth = String(date.getMonth() + 1).padStart(2, '0');
-  const resultDay = String(date.getDate()).padStart(2, '0');
+  const resultMonth = String(date.getMonth() + 1).padStart(2, "0");
+  const resultDay = String(date.getDate()).padStart(2, "0");
   return `${resultYear}-${resultMonth}-${resultDay}`;
 }

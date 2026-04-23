@@ -1,13 +1,14 @@
-import { ClinicalInteractionType } from '../src/common/enums/clinical-interaction-type.enum';
-import { ClinicalResolutionType } from '../src/common/enums/clinical-resolution-type.enum';
-import { DoseUnit } from '../src/common/enums/dose-unit.enum';
-import { GroupCode } from '../src/common/enums/group-code.enum';
-import { MonthlySpecialReference } from '../src/common/enums/monthly-special-reference.enum';
-import { OcularLaterality } from '../src/common/enums/ocular-laterality.enum';
-import { OticLaterality } from '../src/common/enums/otic-laterality.enum';
-import { PrnReason } from '../src/common/enums/prn-reason.enum';
-import { ScheduleStatus } from '../src/common/enums/schedule-status.enum';
-import { TreatmentRecurrence } from '../src/common/enums/treatment-recurrence.enum';
+import { ClinicalAnchor } from "../src/common/enums/clinical-anchor.enum";
+import { ClinicalInteractionType } from "../src/common/enums/clinical-interaction-type.enum";
+import { ClinicalResolutionType } from "../src/common/enums/clinical-resolution-type.enum";
+import { ClinicalSemanticTag } from "../src/common/enums/clinical-semantic-tag.enum";
+import { DoseUnit } from "../src/common/enums/dose-unit.enum";
+import { GroupCode } from "../src/common/enums/group-code.enum";
+import { MonthlySpecialReference } from "../src/common/enums/monthly-special-reference.enum";
+import { OcularLaterality } from "../src/common/enums/ocular-laterality.enum";
+import { PrnReason } from "../src/common/enums/prn-reason.enum";
+import { ScheduleStatus } from "../src/common/enums/schedule-status.enum";
+import { TreatmentRecurrence } from "../src/common/enums/treatment-recurrence.enum";
 import {
   buildInteractionRule,
   buildPhase,
@@ -16,618 +17,433 @@ import {
   buildRoutine,
   buildScheduleResult,
   createSchedulingService,
-} from './helpers/scheduling-test-helpers';
+} from "./helpers/scheduling-test-helpers";
 
-describe('SchedulingService final schedule JSON contract', () => {
-  it('returns snake_case fields required by frontend/PDF with code+label metadata', async () => {
+describe("SchedulingService final calendar JSON contract", () => {
+  it("returns the top-level blocks required by the frontend/PDF", async () => {
+    const { service } = createSchedulingService();
+    const result = await buildScheduleResult(
+      service,
+      [
+        buildPrescriptionMedication({
+          medicationSnapshot: {
+            commercialName: "CONTRAVE",
+            activePrinciple: "Naltrexona 8 mg + Bupropiona 90 mg",
+            presentation: "Comprimido revestido de liberacao prolongada",
+            pharmaceuticalForm: "Comprimido",
+            administrationRoute: "Via oral",
+            usageInstructions: "Utilizar junto com as refeicoes.",
+          },
+          protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_III, {
+            code: "GROUP_III_CONTRAVE",
+          }),
+          phases: [
+            buildPhase({
+              phaseOrder: 1,
+              frequency: 1,
+              doseAmount: "1 COMP",
+              doseValue: "1",
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 7,
+            }),
+          ],
+        }),
+      ],
+      { startedAt: "2026-02-20" },
+    );
+
+    expect(result).toMatchObject({
+      documentHeader: {
+        nomeEmpresa: "AT Farma",
+        cnpj: "12.345.678/0001-90",
+        telefone: "(68)3333-4444",
+        email: "contato@atfarma.com.br",
+        farmaceuticoNome: "Farmacêutica Teste",
+        farmaceuticoCrf: "CRF-AC 1234",
+      },
+      patient: {
+        id: expect.any(String),
+        nome: "Paciente Teste",
+        dataNascimento: "01/01/1970",
+        idade: expect.any(Number),
+        rg: "RG-TESTE",
+        cpf: "000.000.000-00",
+        telefone: "(68)99999-9999",
+      },
+      routine: {
+        acordar: "06:00",
+        cafe: "07:00",
+        almoco: "12:00",
+        lanche: "15:00",
+        jantar: "19:00",
+        dormir: "22:00",
+      },
+      scheduleItems: expect.any(Array),
+    });
+
+    expect(result.scheduleItems[0]).toMatchObject({
+      prescriptionMedicationId: expect.any(String),
+      medicamento: "CONTRAVE",
+      principioAtivo: "Naltrexona 8 mg + Bupropiona 90 mg",
+      apresentacao: "Comprimido revestido de liberacao prolongada",
+      formaFarmaceutica: "Comprimido",
+      via: "Via oral",
+      modoUso: "Utilizar junto com as refeicoes.",
+      recorrenciaTexto: "Diário",
+      inicio: "20/02/2026",
+      termino: "26/02/2026",
+      status: "Ativo",
+      observacoes: [],
+      doses: [
+        {
+          label: "D1",
+          horario: "07:00",
+          doseValor: "1",
+          doseUnidade: DoseUnit.COMP,
+          doseExibicao: "1 COMP",
+          status: ScheduleStatus.ACTIVE,
+          statusLabel: "Ativo",
+          observacao: null,
+        },
+      ],
+    });
+  });
+
+  it("keeps one schedule item per clinically distinct phase block", async () => {
+    const { service } = createSchedulingService();
+    const result = await buildScheduleResult(
+      service,
+      [
+        buildPrescriptionMedication({
+          medicationSnapshot: {
+            commercialName: "CONTRAVE",
+            activePrinciple: "Naltrexona 8 mg + Bupropiona 90 mg",
+          },
+          phases: [
+            buildPhase({ phaseOrder: 1, frequency: 1, treatmentDays: 7 }),
+            buildPhase({ phaseOrder: 2, frequency: 2, treatmentDays: 7 }),
+          ],
+        }),
+      ],
+      { startedAt: "2026-02-20" },
+    );
+
+    expect(result.scheduleItems).toHaveLength(2);
+    expect(
+      result.scheduleItems.map((item) => item.prescriptionMedicationId),
+    ).toEqual([
+      result.scheduleItems[0].prescriptionMedicationId,
+      result.scheduleItems[0].prescriptionMedicationId,
+    ]);
+    expect(result.scheduleItems[0]).toMatchObject({
+      recorrenciaTexto: "Diário",
+      inicio: "20/02/2026",
+      termino: "26/02/2026",
+    });
+    expect(result.scheduleItems[1]).toMatchObject({
+      recorrenciaTexto: "Diário",
+      inicio: "27/02/2026",
+      termino: "05/03/2026",
+    });
+    expect(result.scheduleItems[1].doses).toHaveLength(2);
+  });
+
+  it("maps recurrence text for weekly, monthly, alternate-days and PRN treatments", async () => {
     const { service } = createSchedulingService();
     const result = await buildScheduleResult(service, [
       buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'CONTRAVE',
-          activePrinciple: 'Naltrexona 8 mg + Bupropiona 90 mg',
-          presentation: 'Comprimido revestido de liberacao prolongada',
-          pharmaceuticalForm: 'Comprimido',
-          administrationRoute: 'Via oral',
-          usageInstructions: 'Utilizar junto com as refeicoes.',
-        },
-        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_III, {
-          code: 'GROUP_III_CONTRAVE',
-          name: 'Contrave escalonado',
-          description: 'Escalonamento em fases',
-        }),
+        medicationSnapshot: { commercialName: "A" },
         phases: [
           buildPhase({
             phaseOrder: 1,
-            frequency: 1,
-            doseAmount: '1 COMP',
-            doseValue: '1',
-            doseUnit: DoseUnit.COMP,
-            recurrenceType: TreatmentRecurrence.DAILY,
-            treatmentDays: 7,
+            recurrenceType: TreatmentRecurrence.WEEKLY,
+            weeklyDay: "SEGUNDA",
           }),
         ],
       }),
-    ], { startedAt: '2026-02-20' });
-
-    expect(result).toMatchObject({
-      paciente_id: expect.any(String),
-      prescricao_id: expect.any(String),
-      paciente: {
-        nome_completo: 'Paciente Teste',
-        data_nascimento: '01/01/1970',
-        idade: expect.any(Number),
-        rg: 'RG-TESTE',
-        cpf: '000.000.000-00',
-        telefone: '(68)99999-9999',
-      },
-      rotina: {
-        acordar: '06:00',
-        cafe: '07:00',
-        almoco: '12:00',
-        lanche: '15:00',
-        jantar: '19:00',
-        dormir: '22:00',
-      },
-      data_inicio_prescricao: '20/02/2026',
-      data_geracao_schedule: expect.any(String),
-      medicamentos: expect.any(Array),
-    });
-    expect(result.data_geracao_schedule).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-
-    const medication = result.medicamentos[0];
-    expect(medication).toMatchObject({
-      prescription_medication_id: expect.any(String),
-      nome_medicamento: 'CONTRAVE',
-      principio_ativo: 'Naltrexona 8 mg + Bupropiona 90 mg',
-      apresentacao: 'Comprimido revestido de liberacao prolongada',
-      forma_farmaceutica: 'Comprimido',
-      via_administracao: 'Via oral',
-      orientacoes_uso: 'Utilizar junto com as refeicoes.',
-      grupo_codigo: GroupCode.GROUP_III,
-      grupo_label: expect.any(String),
-      protocolo_codigo: 'GROUP_III_CONTRAVE',
-      protocolo_nome: 'Contrave escalonado',
-      protocolo_descricao: 'Escalonamento em fases',
-    });
-
-    const phase = medication.fases[0];
-    expect(phase).toMatchObject({
-      phase_id: expect.any(String),
-      fase_ordem: 1,
-      fase_label: 'Posologia 1',
-      data_inicio: '20/02/2026',
-      data_fim: '26/02/2026',
-      uso_continuo: false,
-      regra_mensal_especial_codigo: null,
-      regra_mensal_especial_label: null,
-      data_base_clinica: null,
-      deslocamento_dias: null,
-      data_referencia_regra: null,
-      descricao_regra_mensal: null,
-      lateralidade_ocular_codigo: null,
-      lateralidade_ocular_label: null,
-      lateralidade_otologica_codigo: null,
-      lateralidade_otologica_label: null,
-      via_administracao_label: 'Via oral',
-      escala_glicemica: null,
-      escala_glicemica_label: null,
-      entradas: expect.any(Array),
-    });
-    expect(phase.data_inicio).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-    expect(phase.data_fim).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
-
-    const entry = phase.entradas[0];
-    expect(entry).toMatchObject({
-      prescription_medication_id: expect.any(String),
-      phase_id: expect.any(String),
-      dose_horario_label: 'D1',
-      dose_valor: '1',
-      dose_unidade: DoseUnit.COMP,
-      dose_exibicao: '1 COMP',
-      horario: '07:00',
-      recorrencia_codigo: TreatmentRecurrence.DAILY,
-      recorrencia_label: expect.any(String),
-      regra_mensal_especial_codigo: null,
-      regra_mensal_especial_label: null,
-      data_base_clinica: null,
-      deslocamento_dias: null,
-      data_referencia_regra: null,
-      descricao_regra_mensal: null,
-      lateralidade_ocular_codigo: null,
-      lateralidade_ocular_label: null,
-      lateralidade_otologica_codigo: null,
-      lateralidade_otologica_label: null,
-      via_administracao_label: 'Via oral',
-      escala_glicemica: null,
-      escala_glicemica_label: null,
-      status_codigo: ScheduleStatus.ACTIVE,
-      status_label: expect.any(String),
-      observacao: null,
-      conflito: null,
-    });
-
-    expect(entry.prescription_medication_id).toBe(medication.prescription_medication_id);
-    expect(entry.phase_id).toBe(phase.phase_id);
-  });
-
-  it('returns data_fim as null when phase is uso_continuo', async () => {
-    const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
       buildPrescriptionMedication({
+        medicationSnapshot: { commercialName: "B" },
         phases: [
           buildPhase({
             phaseOrder: 1,
-            frequency: 1,
-            recurrenceType: TreatmentRecurrence.DAILY,
-            continuousUse: true,
+            recurrenceType: TreatmentRecurrence.MONTHLY,
+            monthlyDay: 5,
+          }),
+        ],
+      }),
+      buildPrescriptionMedication({
+        medicationSnapshot: { commercialName: "C" },
+        phases: [
+          buildPhase({
+            phaseOrder: 1,
+            recurrenceType: TreatmentRecurrence.ALTERNATE_DAYS,
+            alternateDaysInterval: 2,
+          }),
+        ],
+      }),
+      buildPrescriptionMedication({
+        medicationSnapshot: { commercialName: "D" },
+        phases: [
+          buildPhase({
+            phaseOrder: 1,
+            recurrenceType: TreatmentRecurrence.PRN,
+            prnReason: PrnReason.PAIN,
             treatmentDays: undefined,
           }),
         ],
       }),
-    ], { startedAt: '2026-03-15' });
+      buildPrescriptionMedication({
+        medicationSnapshot: { commercialName: "E" },
+        phases: [
+          buildPhase({
+            phaseOrder: 1,
+            recurrenceType: TreatmentRecurrence.MONTHLY,
+            monthlyDay: undefined,
+            monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
+            monthlySpecialBaseDate: "2026-04-01",
+            monthlySpecialOffsetDays: 5,
+          }),
+        ],
+      }),
+    ]);
 
-    expect(result.medicamentos[0].fases[0]).toMatchObject({
-      data_inicio: '15/03/2026',
-      data_fim: null,
-      uso_continuo: true,
-    });
+    expect(
+      result.scheduleItems.map((item) => [
+        item.medicamento,
+        item.recorrenciaTexto,
+      ]),
+    ).toEqual([
+      ["A", "Semanal: segunda-feira"],
+      ["B", "Mensal: dia 05"],
+      ["C", "A cada 2 dias"],
+      ["D", "Em caso de dor"],
+      [
+        "E",
+        "Primeira aplicação: 5º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.",
+      ],
+    ]);
   });
 
-  it('keeps operational ids consistent across medicamentos, fases and entradas', async () => {
+  it("supports per-dose amounts in the final contract", async () => {
     const { service } = createSchedulingService();
     const result = await buildScheduleResult(service, [
       buildPrescriptionMedication({
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I, {
+          frequencies: [
+            {
+              frequency: 2,
+              steps: [
+                {
+                  doseLabel: "D1",
+                  anchor: ClinicalAnchor.CAFE,
+                  offsetMinutes: 0,
+                  semanticTag: ClinicalSemanticTag.STANDARD,
+                },
+                {
+                  doseLabel: "D2",
+                  anchor: ClinicalAnchor.JANTAR,
+                  offsetMinutes: 0,
+                  semanticTag: ClinicalSemanticTag.STANDARD,
+                },
+              ],
+            },
+          ],
+        }),
         phases: [
           buildPhase({
-            phaseOrder: 1,
             frequency: 2,
-            treatmentDays: 5,
+            sameDosePerSchedule: false,
+            perDoseOverrides: [
+              { doseLabel: "D1", doseValue: "1", doseUnit: DoseUnit.COMP },
+              { doseLabel: "D2", doseValue: "2", doseUnit: DoseUnit.COMP },
+            ],
           }),
         ],
       }),
-      buildPrescriptionMedication({
-        phases: [
-          buildPhase({
-            phaseOrder: 1,
-            frequency: 1,
-            treatmentDays: 5,
-          }),
-        ],
-      }),
-    ], { startedAt: '2026-04-01' });
+    ]);
 
-    result.medicamentos.forEach((medication) => {
-      expect(medication.prescription_medication_id).toEqual(expect.any(String));
-      medication.fases.forEach((phase) => {
-        expect(phase.phase_id).toEqual(expect.any(String));
-        phase.entradas.forEach((entry) => {
-          expect(entry.prescription_medication_id).toBe(medication.prescription_medication_id);
-          expect(entry.phase_id).toBe(phase.phase_id);
-        });
-      });
-    });
+    expect(result.scheduleItems[0].doses).toMatchObject([
+      {
+        label: "D1",
+        doseValor: "1",
+        doseUnidade: DoseUnit.COMP,
+        doseExibicao: "1 COMP",
+      },
+      {
+        label: "D2",
+        doseValor: "2",
+        doseUnidade: DoseUnit.COMP,
+        doseExibicao: "2 COMP",
+      },
+    ]);
   });
 
-  it('returns deterministic idade and data_geracao_schedule with frozen clock', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-04-22T10:00:00'));
+  it("keeps 24:00 and exposes routine/patient data in the final contract", async () => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-04-22T10:00:00"));
     try {
-      const { service } = createSchedulingService();
-      const result = await buildScheduleResult(service, [
-        buildPrescriptionMedication(),
-      ], { startedAt: '2026-04-17' });
+      const { service } = createSchedulingService({
+        routine: buildRoutine({
+          acordar: "06:00",
+          cafe: "06:00",
+          almoco: "12:00",
+          lanche: "18:00",
+          jantar: "18:00",
+          dormir: "24:00",
+        }),
+      });
 
-      expect(result.paciente).toMatchObject({
-        nome_completo: 'Paciente Teste',
-        data_nascimento: '01/01/1970',
+      const result = await buildScheduleResult(
+        service,
+        [
+          buildPrescriptionMedication({
+            protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I, {
+              frequencies: [
+                {
+                  frequency: 4,
+                  steps: [
+                    {
+                      doseLabel: "D1",
+                      anchor: ClinicalAnchor.ACORDAR,
+                      offsetMinutes: 0,
+                      semanticTag: ClinicalSemanticTag.STANDARD,
+                    },
+                    {
+                      doseLabel: "D2",
+                      anchor: ClinicalAnchor.ACORDAR,
+                      offsetMinutes: 360,
+                      semanticTag: ClinicalSemanticTag.STANDARD,
+                    },
+                    {
+                      doseLabel: "D3",
+                      anchor: ClinicalAnchor.ACORDAR,
+                      offsetMinutes: 720,
+                      semanticTag: ClinicalSemanticTag.STANDARD,
+                    },
+                    {
+                      doseLabel: "D4",
+                      anchor: ClinicalAnchor.ACORDAR,
+                      offsetMinutes: 1080,
+                      semanticTag: ClinicalSemanticTag.STANDARD,
+                    },
+                  ],
+                },
+              ],
+            }),
+            phases: [buildPhase({ frequency: 4 })],
+          }),
+        ],
+        { startedAt: "2026-04-17" },
+      );
+
+      expect(result.patient).toMatchObject({
+        nome: "Paciente Teste",
+        dataNascimento: "01/01/1970",
         idade: 56,
       });
-      expect(result.data_geracao_schedule).toBe('22/04/2026');
-      expect(result.data_inicio_prescricao).toBe('17/04/2026');
+      expect(result.routine.dormir).toBe("24:00");
+      expect(result.scheduleItems[0].doses.map((dose) => dose.horario)).toEqual(
+        ["06:00", "12:00", "18:00", "24:00"],
+      );
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('returns null for optional patient document fields when absent', async () => {
+  it("reflects ocular laterality in via/modo de uso and keeps optional patient fields nullable", async () => {
     const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
-      buildPrescriptionMedication(),
-    ], {
-      patient: {
-        id: 'patient-optional-null',
-        fullName: 'Paciente Sem Documento',
-        birthDate: '1980-07-05',
-        rg: undefined,
-        cpf: undefined,
-        phone: undefined,
-        routines: [],
-        prescriptions: [],
-      } as never,
-    });
+    const result = await buildScheduleResult(
+      service,
+      [
+        buildPrescriptionMedication({
+          medicationSnapshot: {
+            commercialName: "COLÍRIO TESTE",
+            activePrinciple: "Cloreto de sódio",
+            administrationRoute: "Via ocular",
+            usageInstructions: "Pingar conforme orientacao.",
+          },
+          phases: [
+            buildPhase({
+              ocularLaterality: OcularLaterality.RIGHT_EYE,
+            }),
+          ],
+        }),
+      ],
+      {
+        patient: {
+          id: "patient-optional-null",
+          fullName: "Paciente Sem Documento",
+          birthDate: "1980-07-05",
+          rg: undefined,
+          cpf: undefined,
+          phone: undefined,
+          routines: [],
+          prescriptions: [],
+        } as never,
+      },
+    );
 
-    expect(result.paciente).toMatchObject({
-      nome_completo: 'Paciente Sem Documento',
-      data_nascimento: '05/07/1980',
+    expect(result.patient).toMatchObject({
+      nome: "Paciente Sem Documento",
+      dataNascimento: "05/07/1980",
       rg: null,
       cpf: null,
       telefone: null,
     });
+    expect(result.scheduleItems[0]).toMatchObject({
+      via: "Via ocular - olho direito",
+      modoUso: "Pingar conforme orientacao. Aplicar no olho direito.",
+    });
   });
 
-  it('returns conflict payload with snake_case keys and labels when conflict exists', async () => {
+  it("exposes dose time context and conflict metadata for frontend rendering/debug", async () => {
     const { service } = createSchedulingService({
       routine: buildRoutine({
-        acordar: '06:00',
-        cafe: '07:00',
-        almoco: '13:00',
-        lanche: '16:00',
-        jantar: '19:00',
-        dormir: '21:00',
+        acordar: "06:00",
+        cafe: "07:00",
+        almoco: "12:00",
+        lanche: "15:00",
+        jantar: "19:00",
+        dormir: "22:00",
       }),
     });
 
-    const sucralfato = buildPrescriptionMedication({
-      medicationSnapshot: {
-        commercialName: 'SUCRAFILM',
-        activePrinciple: 'Sucralfato 200mg/ml',
-        presentation: 'Suspensao oral 10 ml',
-        administrationRoute: 'VO',
-        usageInstructions: '1 hora antes ou 2 horas apos as refeicoes.',
-      },
-      protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_II_SUCRA),
-      phases: [
-        buildPhase({
-          frequency: 2,
-          doseAmount: '10 ML',
-          doseValue: '10',
-          doseUnit: DoseUnit.ML,
-          treatmentDays: 30,
-        }),
-      ],
-    });
-
-    const interactor = buildPrescriptionMedication({
-      medicationSnapshot: {
-        commercialName: 'LOSARTANA',
-        activePrinciple: 'Losartana potassica',
-        presentation: 'Comprimido',
-        administrationRoute: 'VO',
-        usageInstructions: 'Conforme orientacao clinica.',
-      },
-      protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I),
-      interactionRulesSnapshot: [
-        buildInteractionRule({
-          interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
-          targetGroupCode: GroupCode.GROUP_II_SUCRA,
-          resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
-          windowMinutes: 420,
-          priority: 100,
-        }),
-      ],
-      phases: [
-        buildPhase({
-          frequency: 1,
-          doseAmount: '1 COMP',
-          manualAdjustmentEnabled: true,
-          manualTimes: ['08:00'],
-          treatmentDays: 30,
-        }),
-      ],
-    });
-
-    const result = await buildScheduleResult(service, [sucralfato, interactor]);
-    const sucralfatoEntry = result.medicamentos
-      .find((medication) => medication.nome_medicamento === 'SUCRAFILM')
-      ?.fases[0]
-      ?.entradas.find((entry) => entry.horario === '15:00');
-
-    expect(sucralfatoEntry?.conflito).toMatchObject({
-      tipo_interacao_codigo: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
-      tipo_interacao_label: expect.any(String),
-      tipo_resolucao_codigo: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
-      tipo_resolucao_label: expect.any(String),
-      medicamento_disparador_nome: 'LOSARTANA',
-      grupo_disparador_codigo: GroupCode.GROUP_I,
-      protocolo_disparador_codigo: expect.any(String),
-      prioridade_regra: 100,
-      janela_antes_minutos: 420,
-      janela_depois_minutos: 420,
-    });
-  });
-
-  it('returns ocular laterality labels for XALACOM-equivalent prescription', async () => {
-    const { service } = createSchedulingService();
     const result = await buildScheduleResult(service, [
       buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'XALACOM',
-          activePrinciple: 'Latanoprosta + Maleato de timolol',
-          presentation: 'Frasco 2,5 ml',
-          administrationRoute: 'Via ocular',
-          usageInstructions: 'Instilar uma gota ao dia.',
-          isOphthalmic: true,
-        },
-        phases: [
-          buildPhase({
-            frequency: 1,
-            doseAmount: '1 GOTA',
-            doseValue: '1',
-            doseUnit: DoseUnit.GOTAS,
-            recurrenceType: TreatmentRecurrence.DAILY,
-            treatmentDays: 10,
-            ocularLaterality: OcularLaterality.RIGHT_EYE,
-          }),
-        ],
+        medicationSnapshot: { commercialName: "SUCRAFILM" },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_II_SUCRA),
+        phases: [buildPhase({ frequency: 2 })],
       }),
-    ]);
-
-    const phase = result.medicamentos[0].fases[0];
-    const entry = phase.entradas[0];
-    expect(phase).toMatchObject({
-      lateralidade_ocular_codigo: OcularLaterality.RIGHT_EYE,
-      lateralidade_ocular_label: 'olho direito',
-      lateralidade_otologica_codigo: null,
-      lateralidade_otologica_label: null,
-      via_administracao_label: 'Via ocular - olho direito',
-    });
-    expect(entry).toMatchObject({
-      lateralidade_ocular_codigo: OcularLaterality.RIGHT_EYE,
-      lateralidade_ocular_label: 'olho direito',
-      lateralidade_otologica_codigo: null,
-      lateralidade_otologica_label: null,
-      via_administracao_label: 'Via ocular - olho direito',
-    });
-  });
-
-  it('returns otic laterality labels for OTOCIRIAX-equivalent prescription', async () => {
-    const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
       buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'OTOCIRIAX',
-          activePrinciple: 'Ciprofloxacino + Hidrocortisona',
-          presentation: 'Frasco 10 ml',
-          administrationRoute: 'Via otológica',
-          usageInstructions: 'Instilar conforme orientação.',
-          isOtic: true,
-        },
-        phases: [
-          buildPhase({
-            frequency: 1,
-            doseAmount: '3 GOTAS',
-            doseValue: '3',
-            doseUnit: DoseUnit.GOTAS,
-            recurrenceType: TreatmentRecurrence.DAILY,
-            treatmentDays: 7,
-            oticLaterality: OticLaterality.BOTH_EARS,
+        medicationSnapshot: { commercialName: "CLONAZEPAM" },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I_SED),
+        interactionRulesSnapshot: [
+          buildInteractionRule({
+            interactionType: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+            resolutionType: ClinicalResolutionType.INACTIVATE_SOURCE,
+            targetGroupCode: GroupCode.GROUP_II_SUCRA,
+            targetProtocolCode: undefined,
+            applicableSemanticTags: [ClinicalSemanticTag.BEDTIME_EQUIVALENT],
           }),
         ],
+        phases: [buildPhase()],
       }),
     ]);
 
-    const phase = result.medicamentos[0].fases[0];
-    const entry = phase.entradas[0];
-    expect(phase).toMatchObject({
-      lateralidade_ocular_codigo: null,
-      lateralidade_ocular_label: null,
-      lateralidade_otologica_codigo: OticLaterality.BOTH_EARS,
-      lateralidade_otologica_label: 'nas 2 orelhas',
-      via_administracao_label: 'Via otológica - nas 2 orelhas',
-    });
-    expect(entry).toMatchObject({
-      lateralidade_ocular_codigo: null,
-      lateralidade_ocular_label: null,
-      lateralidade_otologica_codigo: OticLaterality.BOTH_EARS,
-      lateralidade_otologica_label: 'nas 2 orelhas',
-      via_administracao_label: 'Via otológica - nas 2 orelhas',
-    });
-  });
+    const sucralfateAtNight = result.scheduleItems
+      .flatMap((item) => item.doses)
+      .find((dose) => dose.horario === "22:00");
 
-  it('returns glycemia scale fields and clinical labels for rapid-insulin equivalent', async () => {
-    const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
-      buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'INSULINA RAPIDA',
-          activePrinciple: 'Insulina humana regular',
-          presentation: 'Frasco-ampola 10 ml',
-          administrationRoute: 'Via subcutânea',
-          usageInstructions: 'Aplicar conforme escala glicêmica.',
-          requiresGlycemiaScale: true,
-        },
-        phases: [
-          buildPhase({
-            frequency: 1,
-            doseAmount: '2 UI',
-            doseValue: '2',
-            doseUnit: DoseUnit.UI,
-            recurrenceType: TreatmentRecurrence.DAILY,
-            treatmentDays: 7,
-            glycemiaScaleRanges: [
-              { minimum: 70, maximum: 140, doseValue: '0', doseUnit: DoseUnit.UI },
-              { minimum: 141, maximum: 180, doseValue: '2', doseUnit: DoseUnit.UI },
-              { minimum: 181, maximum: 220, doseValue: '4', doseUnit: DoseUnit.UI },
-            ],
-          }),
-        ],
-      }),
-    ], { startedAt: '2026-03-01' });
-
-    const phase = result.medicamentos[0].fases[0];
-    const entry = phase.entradas[0];
-    expect(phase.escala_glicemica).toEqual([
-      {
-        minimo: 70,
-        maximo: 140,
-        dose: '0',
-        unidade: DoseUnit.UI,
-        label_clinico: 'Se glicemia entre 70 e 140: aplicar 0 UI.',
+    expect(sucralfateAtNight).toMatchObject({
+      contextoHorario: {
+        ancora: ClinicalAnchor.DORMIR,
+        horario_original: "22:00",
+        horario_resolvido: "22:00",
       },
-      {
-        minimo: 141,
-        maximo: 180,
-        dose: '2',
-        unidade: DoseUnit.UI,
-        label_clinico: 'Se glicemia entre 141 e 180: aplicar 2 UI.',
+      conflito: {
+        tipo_interacao_codigo: ClinicalInteractionType.AFFECTED_BY_SUCRALFATE,
+        tipo_resolucao_codigo: ClinicalResolutionType.INACTIVATE_SOURCE,
       },
-      {
-        minimo: 181,
-        maximo: 220,
-        dose: '4',
-        unidade: DoseUnit.UI,
-        label_clinico: 'Se glicemia entre 181 e 220: aplicar 4 UI.',
-      },
-    ]);
-    expect(phase.escala_glicemica_label).toBe(
-      'Se glicemia entre 70 e 140: aplicar 0 UI. Se glicemia entre 141 e 180: aplicar 2 UI. Se glicemia entre 181 e 220: aplicar 4 UI.',
-    );
-    expect(entry.escala_glicemica).toEqual(phase.escala_glicemica);
-    expect(entry.escala_glicemica_label).toBe(phase.escala_glicemica_label);
-  });
-
-  it('returns glycemia scale on all entries for ultra-rapid-insulin equivalent', async () => {
-    const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
-      buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'INSULINA ULTRA RAPIDA',
-          activePrinciple: 'Insulina lispro',
-          presentation: 'Caneta 3 ml',
-          administrationRoute: 'Via subcutânea',
-          usageInstructions: 'Aplicar antes das refeições conforme escala.',
-          requiresGlycemiaScale: true,
-        },
-        phases: [
-          buildPhase({
-            frequency: 2,
-            doseAmount: '3 UI',
-            doseValue: '3',
-            doseUnit: DoseUnit.UI,
-            recurrenceType: TreatmentRecurrence.DAILY,
-            treatmentDays: 5,
-            glycemiaScaleRanges: [
-              { minimum: 100, maximum: 150, doseValue: '2', doseUnit: DoseUnit.UI },
-              { minimum: 151, maximum: 200, doseValue: '4', doseUnit: DoseUnit.UI },
-            ],
-          }),
-        ],
-      }),
-    ]);
-
-    const phase = result.medicamentos[0].fases[0];
-    expect(phase.entradas).toHaveLength(2);
-    expect(phase.escala_glicemica).toEqual([
-      {
-        minimo: 100,
-        maximo: 150,
-        dose: '2',
-        unidade: DoseUnit.UI,
-        label_clinico: 'Se glicemia entre 100 e 150: aplicar 2 UI.',
-      },
-      {
-        minimo: 151,
-        maximo: 200,
-        dose: '4',
-        unidade: DoseUnit.UI,
-        label_clinico: 'Se glicemia entre 151 e 200: aplicar 4 UI.',
-      },
-    ]);
-    phase.entradas.forEach((entry) => {
-      expect(entry.escala_glicemica).toEqual(phase.escala_glicemica);
-      expect(entry.escala_glicemica_label).toBe(phase.escala_glicemica_label);
-    });
-  });
-
-  it('returns monthly special rule fields for PERLUTAN-equivalent contraceptive monthly', async () => {
-    const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
-      buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'PERLUTAN',
-          activePrinciple: 'Algestona acetofenida + enantato de estradiol',
-          presentation: 'Ampola 1 ml',
-          administrationRoute: 'Via intramuscular',
-          usageInstructions:
-            'Administrar no 8º dia após início da menstruação.',
-          isContraceptiveMonthly: true,
-        },
-        phases: [
-          buildPhase({
-            frequency: 1,
-            doseAmount: '1 ML',
-            doseValue: '1',
-            doseUnit: DoseUnit.ML,
-            recurrenceType: TreatmentRecurrence.MONTHLY,
-            continuousUse: true,
-            treatmentDays: undefined,
-            monthlyDay: undefined,
-            monthlySpecialReference: MonthlySpecialReference.MENSTRUATION_START,
-            monthlySpecialBaseDate: '2026-02-20',
-            monthlySpecialOffsetDays: 8,
-          }),
-        ],
-      }),
-    ]);
-
-    const phase = result.medicamentos[0].fases[0];
-    const entry = phase.entradas[0];
-
-    expect(phase).toMatchObject({
-      regra_mensal_especial_codigo: MonthlySpecialReference.MENSTRUATION_START,
-      regra_mensal_especial_label: 'Início da menstruação',
-      data_base_clinica: '20/02/2026',
-      deslocamento_dias: 8,
-      data_referencia_regra: '28/02/2026',
-      descricao_regra_mensal:
-        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
-    });
-
-    expect(entry).toMatchObject({
-      recorrencia_codigo: TreatmentRecurrence.MONTHLY,
-      recorrencia_label:
-        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
-      regra_mensal:
-        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
-      dia_mensal: null,
-      regra_mensal_especial_codigo: MonthlySpecialReference.MENSTRUATION_START,
-      regra_mensal_especial_label: 'Início da menstruação',
-      data_base_clinica: '20/02/2026',
-      deslocamento_dias: 8,
-      data_referencia_regra: '28/02/2026',
-      descricao_regra_mensal:
-        'Primeira aplicação: 8º dia após início da menstruação. Demais aplicações: mensal no mesmo dia do mês.',
-    });
-  });
-
-  it('returns readable PRN labels for expanded reasons in schedule JSON', async () => {
-    const { service } = createSchedulingService();
-    const result = await buildScheduleResult(service, [
-      buildPrescriptionMedication({
-        medicationSnapshot: {
-          commercialName: 'DIPIRONA',
-          activePrinciple: 'Dipirona monoidratada',
-          presentation: 'Comprimido 500 mg',
-          administrationRoute: 'Via oral',
-          usageInstructions: 'Usar se necessário.',
-        },
-        phases: [
-          buildPhase({
-            frequency: 1,
-            recurrenceType: TreatmentRecurrence.PRN,
-            prnReason: PrnReason.NAUSEA_VOMITING,
-            treatmentDays: undefined,
-          }),
-        ],
-      }),
-    ]);
-
-    const entry = result.medicamentos[0].fases[0].entradas[0];
-    expect(entry).toMatchObject({
-      recorrencia_codigo: TreatmentRecurrence.PRN,
-      recorrencia_label: 'Se necessário: náusea e vômito',
-      motivo_se_necessario: PrnReason.NAUSEA_VOMITING,
-      orientacao_clinica: 'Uso se necessario em caso de náusea e vômito.',
     });
   });
 });

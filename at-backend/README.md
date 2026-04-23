@@ -52,18 +52,22 @@ Cada grupo possui regras específicas para cálculo de horários.
 ## ⚙️ Regras especiais implementadas
 
 ### 🧪 Cálcio
+
 - Horário base: café + 3 horas
 - Se houver conflito com medicamento incompatível → desloca +1h
 
 ### 🧪 Sais
+
 - Se houver conflito com medicamento incompatível → dose inativada
 
 ### 🧪 Sucralfato
+
 1. Tenta horário principal
 2. Se conflito → tenta almoço + 2h
 3. Se ainda houver conflito → dose inativada
 
 ### 💉 Insulina
+
 - Ultra-rápida: -10 min antes da refeição
 - Rápida: -30 min antes da refeição
 
@@ -113,6 +117,12 @@ DB_PORT=5432
 DB_USERNAME=postgres
 DB_PASSWORD=postgres
 DB_NAME=at_system
+CALENDAR_COMPANY_NAME=AT Farma
+CALENDAR_COMPANY_CNPJ=12.345.678/0001-90
+CALENDAR_COMPANY_PHONE=(68)3333-4444
+CALENDAR_COMPANY_EMAIL=contato@atfarma.com.br
+CALENDAR_PHARMACIST_NAME=Farmacêutica Responsável
+CALENDAR_PHARMACIST_CRF=CRF-AC 1234
 ```
 
 ---
@@ -128,26 +138,31 @@ npm run start:dev
 ## 🔌 Endpoints principais
 
 ### Criar paciente
+
 ```
 POST /patients
 ```
 
 ### Criar rotina
+
 ```
 POST /patients/:id/routines
 ```
 
 ### Criar medicamento
+
 ```
 POST /medications
 ```
 
 ### Criar prescrição
+
 ```
 POST /prescriptions
 ```
 
 ### Gerar agenda
+
 ```
 GET /prescriptions/:id/schedule
 ```
