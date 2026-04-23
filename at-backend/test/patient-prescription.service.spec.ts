@@ -9,6 +9,7 @@ import { GroupCode } from '../src/common/enums/group-code.enum';
 import { MonthlySpecialReference } from '../src/common/enums/monthly-special-reference.enum';
 import { OcularLaterality } from '../src/common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../src/common/enums/otic-laterality.enum';
+import { PrnReason } from '../src/common/enums/prn-reason.enum';
 import { TreatmentRecurrence } from '../src/common/enums/treatment-recurrence.enum';
 import { PatientPrescriptionPhase } from '../src/modules/patient-prescriptions/entities/patient-prescription-phase.entity';
 import { PatientPrescriptionService } from '../src/modules/patient-prescriptions/patient-prescription.service';
@@ -1011,6 +1012,159 @@ describe('PatientPrescriptionService', () => {
     });
 
     expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalled();
+  });
+
+  it('accepts GROUP_I frequency 4 for daily and PRN 6/6h prescriptions', async () => {
+    const { service, prescriptionRepository, schedulingService, clinicalCatalogService } =
+      createService();
+    const frequency4 = {
+      frequency: 4,
+      label: '4x ao dia / 6/6h',
+      allowedRecurrenceTypes: [
+        TreatmentRecurrence.DAILY,
+        TreatmentRecurrence.PRN,
+      ],
+      allowsPrn: true,
+      steps: [
+        {
+          doseLabel: 'D1',
+          anchor: ClinicalAnchor.ACORDAR,
+          offsetMinutes: 0,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+        {
+          doseLabel: 'D2',
+          anchor: ClinicalAnchor.ACORDAR,
+          offsetMinutes: 360,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+        {
+          doseLabel: 'D3',
+          anchor: ClinicalAnchor.ACORDAR,
+          offsetMinutes: 720,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+        {
+          doseLabel: 'D4',
+          anchor: ClinicalAnchor.ACORDAR,
+          offsetMinutes: 1080,
+          semanticTag: ClinicalSemanticTag.STANDARD,
+        },
+      ],
+    };
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol({
+        frequencies: [frequency4],
+      }),
+    );
+    prescriptionRepository.findOne.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      patient: { id: 'patient-1' },
+      medications: [
+        {
+          id: 'prescription-medication-1',
+          sourceClinicalMedicationId: 'clinical-1',
+          sourceProtocolId: 'protocol-1',
+          medicationSnapshot: {
+            id: 'clinical-1',
+            commercialName: 'LOSARTANA',
+            activePrinciple: 'Losartana',
+            presentation: 'Comprimido',
+            administrationRoute: 'VO',
+            usageInstructions: 'Conforme prescricao.',
+          },
+          protocolSnapshot: {
+            id: 'protocol-1',
+            code: 'GROUP_I_STANDARD',
+            name: 'Grupo I',
+            description: 'Protocolo base',
+            groupCode: GroupCode.GROUP_I,
+            priority: 0,
+            isDefault: true,
+            frequencies: [frequency4],
+          },
+          interactionRulesSnapshot: [],
+          phases: [
+            {
+              id: 'phase-1',
+              phaseOrder: 1,
+              frequency: 4,
+              sameDosePerSchedule: true,
+              doseAmount: '1 COMP',
+              doseValue: '1',
+              doseUnit: DoseUnit.COMP,
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 6,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            },
+          ],
+        },
+      ],
+    }));
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              {
+                phaseOrder: 1,
+                frequency: 4,
+                sameDosePerSchedule: true,
+                doseAmount: '1 COMP',
+                doseValue: '1',
+                doseUnit: DoseUnit.COMP,
+                recurrenceType: TreatmentRecurrence.DAILY,
+                treatmentDays: 6,
+                continuousUse: false,
+                manualAdjustmentEnabled: false,
+              } as never,
+            ],
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      patientId: 'patient-1',
+      prescriptionId: 'rx-1',
+    });
+
+    await expect(
+      service.create({
+        patientId: 'patient-1',
+        startedAt: '2026-04-21',
+        medications: [
+          {
+            clinicalMedicationId: 'clinical-1',
+            protocolId: 'protocol-1',
+            phases: [
+              {
+                phaseOrder: 1,
+                frequency: 4,
+                sameDosePerSchedule: true,
+                doseAmount: '1 COMP',
+                doseValue: '1',
+                doseUnit: DoseUnit.COMP,
+                recurrenceType: TreatmentRecurrence.PRN,
+                prnReason: PrnReason.PAIN,
+                continuousUse: false,
+                manualAdjustmentEnabled: false,
+              } as never,
+            ],
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      patientId: 'patient-1',
+      prescriptionId: 'rx-1',
+    });
+
+    expect(schedulingService.buildAndPersistSchedule).toHaveBeenCalledTimes(2);
   });
 
   it('accepts ophthalmic prescription phase with ocular laterality (XALACOM equivalent)', async () => {

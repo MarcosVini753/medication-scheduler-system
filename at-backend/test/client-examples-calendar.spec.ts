@@ -8,6 +8,7 @@ import { DoseUnit } from '../src/common/enums/dose-unit.enum';
 import { GroupCode } from '../src/common/enums/group-code.enum';
 import { OcularLaterality } from '../src/common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../src/common/enums/otic-laterality.enum';
+import { PrnReason } from '../src/common/enums/prn-reason.enum';
 import { ScheduleStatus } from '../src/common/enums/schedule-status.enum';
 import { TreatmentRecurrence } from '../src/common/enums/treatment-recurrence.enum';
 import {
@@ -122,6 +123,61 @@ describe('Client document calendar examples', () => {
           ancora: ClinicalAnchor.ACORDAR,
           deslocamento_minutos: -60,
         }),
+      }),
+    ]);
+  });
+
+  it('DORALGINA renders GROUP_I PRN 6/6h schedule from waking time', async () => {
+    const { service } = createSchedulingService({ routine: standardRoutine });
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: 'DORALGINA',
+          activePrinciple: 'Dipirona + isometepteno + cafeína',
+          presentation: 'Comprimido',
+          administrationRoute: 'VO',
+          usageInstructions: 'Tomar em caso de dor.',
+        },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_I),
+        phases: [
+          buildPhase({
+            frequency: 4,
+            recurrenceType: TreatmentRecurrence.PRN,
+            prnReason: PrnReason.PAIN,
+            treatmentDays: undefined,
+            doseValue: '1',
+            doseUnit: DoseUnit.COMP,
+          }),
+        ],
+      }),
+    ]);
+
+    const doralgina = item(result, 'DORALGINA');
+    expect(doralgina).toMatchObject({
+      recorrenciaTexto: 'Em caso de dor',
+    });
+    expect(doralgina.doses.map((dose) => dose.horario)).toEqual([
+      '06:00',
+      '12:00',
+      '18:00',
+      '24:00',
+    ]);
+    expect(doralgina.doses.map((dose) => dose.contextoHorario)).toEqual([
+      expect.objectContaining({
+        ancora: ClinicalAnchor.ACORDAR,
+        deslocamento_minutos: 0,
+      }),
+      expect.objectContaining({
+        ancora: ClinicalAnchor.ACORDAR,
+        deslocamento_minutos: 360,
+      }),
+      expect.objectContaining({
+        ancora: ClinicalAnchor.ACORDAR,
+        deslocamento_minutos: 720,
+      }),
+      expect.objectContaining({
+        ancora: ClinicalAnchor.ACORDAR,
+        deslocamento_minutos: 1080,
       }),
     ]);
   });

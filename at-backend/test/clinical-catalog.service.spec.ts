@@ -368,6 +368,40 @@ describe('ClinicalCatalogService', () => {
     const protocols = flattenedSavedMedications.flatMap((medication) => medication.protocols ?? []);
     const protocolsByCode = new Map(protocols.map((protocol) => [protocol.code, protocol]));
 
+    const groupIProtocol = protocolsByCode.get('GROUP_I_STANDARD');
+    expect(groupIProtocol?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3, 4]);
+    const groupIFrequency4 = groupIProtocol?.frequencies.find((frequency) => frequency.frequency === 4);
+    expect(groupIFrequency4).toMatchObject({
+      frequency: 4,
+      label: '4x ao dia / 6/6h',
+      allowedRecurrenceTypes: [
+        TreatmentRecurrence.DAILY,
+        TreatmentRecurrence.PRN,
+      ],
+      allowsPrn: true,
+    });
+    expect(groupIFrequency4?.steps).toEqual([
+      expect.objectContaining({
+        doseLabel: 'D1',
+        anchor: ClinicalAnchor.ACORDAR,
+        offsetMinutes: 0,
+      }),
+      expect.objectContaining({
+        doseLabel: 'D2',
+        anchor: ClinicalAnchor.ACORDAR,
+        offsetMinutes: 360,
+      }),
+      expect.objectContaining({
+        doseLabel: 'D3',
+        anchor: ClinicalAnchor.ACORDAR,
+        offsetMinutes: 720,
+      }),
+      expect.objectContaining({
+        doseLabel: 'D4',
+        anchor: ClinicalAnchor.ACORDAR,
+        offsetMinutes: 1080,
+      }),
+    ]);
     expect(protocolsByCode.get('GROUP_II_WAKE')?.frequencies.map((frequency) => frequency.frequency)).toEqual([1, 2, 3]);
     const bifosFrequency = protocolsByCode.get('GROUP_II_BIFOS_STANDARD')?.frequencies[0];
     expect(bifosFrequency).toMatchObject({

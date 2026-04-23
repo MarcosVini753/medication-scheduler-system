@@ -359,6 +359,37 @@ export class ClinicalCatalogService {
                   },
                 ],
               },
+              {
+                frequency: 4,
+                label: '4x ao dia / 6/6h',
+                allowedRecurrenceTypes: [
+                  TreatmentRecurrence.DAILY,
+                  TreatmentRecurrence.PRN,
+                ],
+                allowsPrn: true,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 0,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 360,
+                  },
+                  {
+                    doseLabel: 'D3',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 720,
+                  },
+                  {
+                    doseLabel: 'D4',
+                    anchor: ClinicalAnchor.ACORDAR,
+                    offsetMinutes: 1080,
+                  },
+                ],
+              },
             ],
             interactionRules: [
               {
