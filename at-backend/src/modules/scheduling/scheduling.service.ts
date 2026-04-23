@@ -78,6 +78,7 @@ interface WorkingEntry extends ConflictEntryLike {
   stableKey: string;
   sourceClinicalMedicationId: string;
   sourceProtocolId: string;
+  prescriptionMedicationId: string;
   phaseOrder: number;
   protocolPriority: number;
   doseLabel: string;
@@ -432,6 +433,7 @@ export class SchedulingService {
       stableKey: `${medication.id}:${phase.id}:${doseLabel}`,
       sourceClinicalMedicationId: medication.sourceClinicalMedicationId,
       sourceProtocolId: medication.sourceProtocolId,
+      prescriptionMedicationId: medication.id,
       phaseOrder: phase.phaseOrder,
       protocolPriority: medication.protocolSnapshot.priority,
       medicationName:
@@ -439,6 +441,8 @@ export class SchedulingService {
         medication.medicationSnapshot.activePrinciple,
       groupCode: medication.protocolSnapshot.groupCode,
       protocolCode: medication.protocolSnapshot.code,
+      isOphthalmic: isOphthalmicDose(medication, phase),
+      ocularLaterality: phase.ocularLaterality,
       semanticTag,
       interactionRulesSnapshot: medication.interactionRulesSnapshot,
       phaseDoseLabel: doseLabel,
@@ -1004,6 +1008,8 @@ function toInteractionLabel(
       return "Interferência com sucralfato";
     case ClinicalInteractionType.AFFECTED_BY_CALCIUM:
       return "Interferência com cálcio";
+    case ClinicalInteractionType.OPHTHALMIC_MIN_INTERVAL:
+      return "Intervalo mínimo entre colírios";
     default:
       return null;
   }
@@ -1037,6 +1043,31 @@ function toConflictMatchLabel(matchKind?: ConflictMatchKind): string | null {
     default:
       return null;
   }
+}
+
+function isOphthalmicDose(
+  medication: PatientPrescriptionMedication,
+  phase: PatientPrescriptionPhase,
+): boolean {
+  if (medication.medicationSnapshot.isOphthalmic) return true;
+  if (phase.ocularLaterality) return true;
+  return isOphthalmicRoute(medication.medicationSnapshot.administrationRoute);
+}
+
+function isOphthalmicRoute(route?: string): boolean {
+  const normalized = normalizeSearchText(route);
+  return (
+    normalized.includes("ocular") ||
+    normalized.includes("oftalmica") ||
+    normalized.includes("oftalmico")
+  );
+}
+
+function normalizeSearchText(value?: string): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 }
 
 function toClinicalAnchorLabel(anchor: ClinicalAnchor): string {

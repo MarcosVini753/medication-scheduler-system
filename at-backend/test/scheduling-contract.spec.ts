@@ -398,6 +398,88 @@ describe("SchedulingService final calendar JSON contract", () => {
     });
   });
 
+  it("enforces the documented five-minute interval between ophthalmic drops", async () => {
+    const { service } = createSchedulingService({
+      routine: buildRoutine({
+        acordar: "06:00",
+        cafe: "07:00",
+        almoco: "12:00",
+        lanche: "15:00",
+        jantar: "19:00",
+        dormir: "21:00",
+      }),
+    });
+
+    const result = await buildScheduleResult(service, [
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: "XALACOM",
+          activePrinciple: "Latanoprosta + Timolol",
+          administrationRoute: "Via ocular",
+          usageInstructions: "Aplicar 1 gota à noite.",
+          isOphthalmic: true,
+        },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_DELTA, {
+          code: "DELTA_OCULAR_BEDTIME",
+        }),
+        phases: [
+          buildPhase({
+            frequency: 1,
+            doseValue: "1",
+            doseUnit: DoseUnit.GOTAS,
+            ocularLaterality: OcularLaterality.RIGHT_EYE,
+          }),
+        ],
+      }),
+      buildPrescriptionMedication({
+        medicationSnapshot: {
+          commercialName: "OUTRO COLIRIO",
+          activePrinciple: "Brimonidina",
+          administrationRoute: "Via ocular",
+          usageInstructions: "Aplicar 1 gota à noite.",
+          isOphthalmic: true,
+        },
+        protocolSnapshot: buildProtocolSnapshot(GroupCode.GROUP_DELTA, {
+          code: "DELTA_OCULAR_BEDTIME",
+        }),
+        phases: [
+          buildPhase({
+            frequency: 1,
+            doseValue: "1",
+            doseUnit: DoseUnit.GOTAS,
+            ocularLaterality: OcularLaterality.LEFT_EYE,
+          }),
+        ],
+      }),
+    ]);
+
+    const xalacom = result.scheduleItems.find((item) => item.medicamento === "XALACOM");
+    const otherEyeDrop = result.scheduleItems.find((item) => item.medicamento === "OUTRO COLIRIO");
+    const allEyeDropDoses = [xalacom, otherEyeDrop].flatMap((item) => item?.doses ?? []);
+    const shiftedDose = allEyeDropDoses.find(
+      (dose) => dose.reasonCode === ConflictReasonCode.SHIFTED_BY_OPHTHALMIC_INTERVAL,
+    );
+
+    expect(xalacom).toMatchObject({
+      via: "Via ocular - olho direito",
+    });
+    expect(otherEyeDrop).toMatchObject({
+      via: "Via ocular - olho esquerdo",
+    });
+    expect(allEyeDropDoses.map((dose) => dose.horario).sort()).toEqual(["21:00", "21:05"]);
+    expect(shiftedDose).toMatchObject({
+      horario: "21:05",
+      status: ScheduleStatus.ACTIVE,
+      reasonText: expect.stringContaining("intervalo mínimo de 5 minutos entre colírios"),
+      conflito: expect.objectContaining({
+        tipo_interacao_codigo: ClinicalInteractionType.OPHTHALMIC_MIN_INTERVAL,
+        tipo_match_codigo: ConflictMatchKind.EXACT_MINUTE,
+        janela_antes_minutos: 4,
+        janela_depois_minutos: 4,
+      }),
+    });
+  });
+
   it("exposes dose time context and conflict metadata for frontend rendering/debug", async () => {
     const { service } = createSchedulingService({
       routine: buildRoutine({

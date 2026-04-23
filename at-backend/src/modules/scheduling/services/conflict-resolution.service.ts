@@ -6,6 +6,7 @@ import { ClinicalResolutionType } from '../../../common/enums/clinical-resolutio
 import { ClinicalSemanticTag } from '../../../common/enums/clinical-semantic-tag.enum';
 import { ConflictMatchKind } from '../../../common/enums/conflict-match-kind.enum';
 import { ConflictReasonCode } from '../../../common/enums/conflict-reason-code.enum';
+import { OcularLaterality } from '../../../common/enums/ocular-laterality.enum';
 import { ScheduleStatus } from '../../../common/enums/schedule-status.enum';
 import { ClinicalInteractionRuleSnapshot } from '../../patient-prescriptions/entities/patient-prescription-snapshot.types';
 import { ScheduleConflictDto, ResolvedScheduleTimeContextDto } from '../dto/schedule-response.dto';
@@ -18,6 +19,8 @@ const NON_MOVABLE_GROUPS = new Set<string>([
   GroupCode.GROUP_INSUL_INTER,
   GroupCode.GROUP_INSUL_LONGA,
 ]);
+
+const OPHTHALMIC_MIN_INTERVAL_MINUTES = 5;
 
 type ConflictAnchors = Partial<Record<ClinicalAnchor, number>>;
 
@@ -39,6 +42,7 @@ interface RuleImpact {
   resolutionType: ClinicalResolutionType;
   matchKind: ConflictMatchKind;
   rulePriority: number;
+  policy?: 'OPHTHALMIC_MIN_INTERVAL';
 }
 
 export interface ConflictEntryLike {
@@ -47,6 +51,9 @@ export interface ConflictEntryLike {
   groupCode: string;
   protocolCode: string;
   protocolPriority: number;
+  prescriptionMedicationId?: string;
+  isOphthalmic?: boolean;
+  ocularLaterality?: OcularLaterality;
   timeInMinutes: number;
   status: string;
   note?: string;
@@ -90,8 +97,9 @@ export class ConflictResolutionService {
       .flatMap((sourceEntry) => this.collectRuleImpactsForSource(sourceEntry, activeEntries));
 
     const priorityImpacts = this.collectPriorityPolicyImpacts(activeEntries);
+    const ophthalmicImpacts = this.collectOphthalmicPolicyImpacts(activeEntries);
 
-    return [...ruleImpacts, ...priorityImpacts].sort((left, right) => this.compareImpacts(left, right));
+    return [...ruleImpacts, ...priorityImpacts, ...ophthalmicImpacts].sort((left, right) => this.compareImpacts(left, right));
   }
 
   private collectRuleImpactsForSource(
@@ -144,6 +152,50 @@ export class ConflictResolutionService {
     }
 
     return impacts;
+  }
+
+  private collectOphthalmicPolicyImpacts(entries: ConflictEntryLike[]): RuleImpact[] {
+    const impacts: RuleImpact[] = [];
+    const ophthalmicEntries = entries.filter((entry) => entry.isOphthalmic);
+
+    for (let index = 0; index < ophthalmicEntries.length; index += 1) {
+      for (let targetIndex = index + 1; targetIndex < ophthalmicEntries.length; targetIndex += 1) {
+        const left = ophthalmicEntries[index];
+        const right = ophthalmicEntries[targetIndex];
+        const delta = Math.abs(left.timeInMinutes - right.timeInMinutes);
+        if (delta >= OPHTHALMIC_MIN_INTERVAL_MINUTES) {
+          continue;
+        }
+
+        const [blockerEntry, adjustedEntry] = this.selectOphthalmicBlockerAndAdjusted(left, right);
+        impacts.push({
+          adjustedEntry,
+          blockerEntry,
+          resolutionType: ClinicalResolutionType.SHIFT_SOURCE_BY_WINDOW,
+          matchKind: delta === 0 ? ConflictMatchKind.EXACT_MINUTE : ConflictMatchKind.CLINICAL_WINDOW,
+          rulePriority: 9_000,
+          policy: 'OPHTHALMIC_MIN_INTERVAL',
+        });
+      }
+    }
+
+    return impacts;
+  }
+
+  private selectOphthalmicBlockerAndAdjusted(
+    left: ConflictEntryLike,
+    right: ConflictEntryLike,
+  ): [ConflictEntryLike, ConflictEntryLike] {
+    if (left.timeInMinutes !== right.timeInMinutes) {
+      return left.timeInMinutes < right.timeInMinutes ? [left, right] : [right, left];
+    }
+    if ((left.shiftCount ?? 0) > 0 && (right.shiftCount ?? 0) === 0) {
+      return [right, left];
+    }
+    if ((right.shiftCount ?? 0) > 0 && (left.shiftCount ?? 0) === 0) {
+      return [left, right];
+    }
+    return [left, right];
   }
 
   private buildRuleImpact(
@@ -248,6 +300,16 @@ export class ConflictResolutionService {
       return true;
     }
 
+    if ((entry.shiftCount ?? 0) > 0 && impact.policy === 'OPHTHALMIC_MIN_INTERVAL') {
+      this.applyManualResolution(
+        entry,
+        impact,
+        ConflictReasonCode.MANUAL_REQUIRED_OPHTHALMIC_INTERVAL,
+        `ajuste manual exigido após revalidação do intervalo mínimo de ${OPHTHALMIC_MIN_INTERVAL_MINUTES} minutos entre colírios com ${impact.blockerEntry.medicationName}.`,
+      );
+      return true;
+    }
+
     if ((entry.shiftCount ?? 0) > 0) {
       this.applyManualResolution(
         entry,
@@ -268,7 +330,10 @@ export class ConflictResolutionService {
       ];
     }
     entry.timeContext.resolvedTimeInMinutes = entry.timeInMinutes;
-    entry.resolutionReasonCode = ConflictReasonCode.SHIFTED_BY_WINDOW_CONFLICT;
+    entry.resolutionReasonCode =
+      impact.policy === 'OPHTHALMIC_MIN_INTERVAL'
+        ? ConflictReasonCode.SHIFTED_BY_OPHTHALMIC_INTERVAL
+        : ConflictReasonCode.SHIFTED_BY_WINDOW_CONFLICT;
     entry.resolutionReasonText = shift.reasonText;
     entry.note = entry.resolutionReasonText;
     return true;
@@ -284,6 +349,13 @@ export class ConflictResolutionService {
       return {
         timeInMinutes: lunchAnchor + 120,
         reasonText: `Dose deslocada para ALMOÇO + 2H por conflito clínico com ${impact.blockerEntry.medicationName}.`,
+      };
+    }
+
+    if (impact.policy === 'OPHTHALMIC_MIN_INTERVAL') {
+      return {
+        timeInMinutes: impact.blockerEntry.timeInMinutes + OPHTHALMIC_MIN_INTERVAL_MINUTES,
+        reasonText: `Dose deslocada para respeitar intervalo mínimo de ${OPHTHALMIC_MIN_INTERVAL_MINUTES} minutos entre colírios com ${impact.blockerEntry.medicationName}.`,
       };
     }
 
@@ -337,12 +409,18 @@ export class ConflictResolutionService {
   }
 
   private buildConflict(impact: RuleImpact): ScheduleConflictDto {
-    const [windowBefore, windowAfter] = impact.rule
-      ? this.resolveConflictWindows(impact.ruleOwnerEntry ?? impact.blockerEntry, impact.rule)
-      : [0, 0];
+    const [windowBefore, windowAfter] =
+      impact.policy === 'OPHTHALMIC_MIN_INTERVAL'
+        ? [OPHTHALMIC_MIN_INTERVAL_MINUTES - 1, OPHTHALMIC_MIN_INTERVAL_MINUTES - 1]
+        : impact.rule
+          ? this.resolveConflictWindows(impact.ruleOwnerEntry ?? impact.blockerEntry, impact.rule)
+          : [0, 0];
 
     return {
-      interactionType: impact.rule?.interactionType,
+      interactionType:
+        impact.policy === 'OPHTHALMIC_MIN_INTERVAL'
+          ? ClinicalInteractionType.OPHTHALMIC_MIN_INTERVAL
+          : impact.rule?.interactionType,
       resolutionType: impact.resolutionType,
       matchKind: impact.matchKind,
       triggerMedicationName: impact.blockerEntry.medicationName,
@@ -531,6 +609,15 @@ export class ConflictResolutionService {
     return (
       Number(this.isNonMovable(right)) - Number(this.isNonMovable(left)) ||
       right.protocolPriority - left.protocolPriority ||
+      left.medicationName.localeCompare(right.medicationName) ||
+      left.phaseDoseLabel.localeCompare(right.phaseDoseLabel) ||
+      left.stableKey.localeCompare(right.stableKey)
+    );
+  }
+
+  private compareStableEntries(left: ConflictEntryLike, right: ConflictEntryLike): number {
+    return (
+      left.timeInMinutes - right.timeInMinutes ||
       left.medicationName.localeCompare(right.medicationName) ||
       left.phaseDoseLabel.localeCompare(right.phaseDoseLabel) ||
       left.stableKey.localeCompare(right.stableKey)
