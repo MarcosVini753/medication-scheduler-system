@@ -10,6 +10,7 @@ import { ClinicalProtocolStep } from '../modules/clinical-catalog/entities/clini
 import { ClinicalInteractionRule } from '../modules/clinical-catalog/entities/clinical-interaction-rule.entity';
 import { PatientPrescription } from '../modules/patient-prescriptions/entities/patient-prescription.entity';
 import { PatientPrescriptionMedication } from '../modules/patient-prescriptions/entities/patient-prescription-medication.entity';
+import { PatientPrescriptionPhaseDose } from '../modules/patient-prescriptions/entities/patient-prescription-phase-dose.entity';
 import { PatientPrescriptionPhase } from '../modules/patient-prescriptions/entities/patient-prescription-phase.entity';
 import { ScheduledDose } from '../modules/scheduling/entities/scheduled-dose.entity';
 
@@ -32,6 +33,7 @@ export default new DataSource({
     PatientPrescription,
     PatientPrescriptionMedication,
     PatientPrescriptionPhase,
+    PatientPrescriptionPhaseDose,
     ScheduledDose,
   ],
   migrations: ['src/database/migrations/*.ts']

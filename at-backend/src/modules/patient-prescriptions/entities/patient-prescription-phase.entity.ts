@@ -1,4 +1,4 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 import { DoseUnit } from '../../../common/enums/dose-unit.enum';
 import { OcularLaterality } from '../../../common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../../../common/enums/otic-laterality.enum';
@@ -10,9 +10,12 @@ import {
   PrescriptionPhaseGlycemiaScaleRange,
 } from './patient-prescription-snapshot.types';
 import { PatientPrescriptionMedication } from './patient-prescription-medication.entity';
+import { PatientPrescriptionPhaseDose } from './patient-prescription-phase-dose.entity';
 
 @Entity('patient_prescription_phases')
 export class PatientPrescriptionPhase {
+  private phaseDoseOverridesOverride?: PrescriptionPhaseDoseOverride[];
+
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -41,8 +44,11 @@ export class PatientPrescriptionPhase {
   @Column({ type: 'varchar', length: 30, nullable: true })
   doseUnit?: DoseUnit;
 
-  @Column({ type: 'simple-json', nullable: true })
-  perDoseOverrides?: PrescriptionPhaseDoseOverride[];
+  @OneToMany(() => PatientPrescriptionPhaseDose, (doseOverride) => doseOverride.phase, {
+    cascade: true,
+    eager: true,
+  })
+  doseOverrides?: PatientPrescriptionPhaseDose[];
 
   @Column({ type: 'varchar', length: 30, default: TreatmentRecurrence.DAILY })
   recurrenceType: TreatmentRecurrence;
@@ -91,4 +97,48 @@ export class PatientPrescriptionPhase {
 
   @Column({ type: 'simple-array', nullable: true })
   manualTimes?: string[];
+
+  get perDoseOverrides(): PrescriptionPhaseDoseOverride[] | undefined {
+    if (this.phaseDoseOverridesOverride !== undefined) {
+      return this.phaseDoseOverridesOverride;
+    }
+
+    if (!this.doseOverrides?.length) {
+      return undefined;
+    }
+
+    return [...this.doseOverrides]
+      .sort((left, right) => compareDoseLabels(left.doseLabel, right.doseLabel))
+      .map((doseOverride) => ({
+        doseLabel: doseOverride.doseLabel,
+        doseValue: doseOverride.doseValue,
+        doseUnit: doseOverride.doseUnit,
+      }));
+  }
+
+  set perDoseOverrides(value: PrescriptionPhaseDoseOverride[] | undefined) {
+    this.phaseDoseOverridesOverride = value;
+  }
+
+  toJSON(): Record<string, unknown> {
+    const {
+      doseOverrides,
+      phaseDoseOverridesOverride,
+      ...phase
+    } = this as unknown as Record<string, unknown> & {
+      doseOverrides?: PatientPrescriptionPhaseDose[];
+      phaseDoseOverridesOverride?: PrescriptionPhaseDoseOverride[];
+    };
+
+    return {
+      ...phase,
+      perDoseOverrides: this.perDoseOverrides ?? undefined,
+    };
+  }
+}
+
+function compareDoseLabels(left: string, right: string): number {
+  const leftIndex = Number(left.replace(/\D+/g, ''));
+  const rightIndex = Number(right.replace(/\D+/g, ''));
+  return leftIndex - rightIndex || left.localeCompare(right);
 }

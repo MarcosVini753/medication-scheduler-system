@@ -10,6 +10,7 @@ import { MonthlySpecialReference } from '../src/common/enums/monthly-special-ref
 import { OcularLaterality } from '../src/common/enums/ocular-laterality.enum';
 import { OticLaterality } from '../src/common/enums/otic-laterality.enum';
 import { TreatmentRecurrence } from '../src/common/enums/treatment-recurrence.enum';
+import { PatientPrescriptionPhase } from '../src/modules/patient-prescriptions/entities/patient-prescription-phase.entity';
 import { PatientPrescriptionService } from '../src/modules/patient-prescriptions/patient-prescription.service';
 
 describe('PatientPrescriptionService', () => {
@@ -31,6 +32,12 @@ describe('PatientPrescriptionService', () => {
 
     const phaseRepository = {
       create: jest.fn((entity) => entity),
+      delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    };
+
+    const phaseDoseRepository = {
+      create: jest.fn((entity) => entity),
+      delete: jest.fn().mockResolvedValue({ affected: 0 }),
     };
 
     const manager = {
@@ -39,6 +46,7 @@ describe('PatientPrescriptionService', () => {
         if (entityName === 'PatientPrescription') return prescriptionRepository;
         if (entityName === 'PatientPrescriptionMedication') return medicationRepository;
         if (entityName === 'PatientPrescriptionPhase') return phaseRepository;
+        if (entityName === 'PatientPrescriptionPhaseDose') return phaseDoseRepository;
         return repository;
       }),
     };
@@ -93,6 +101,7 @@ describe('PatientPrescriptionService', () => {
       clinicalCatalogService:
         (service as unknown as { clinicalCatalogService: { findMedicationById: jest.Mock } })
           .clinicalCatalogService,
+      phaseDoseRepository,
     };
   }
 
@@ -2214,5 +2223,175 @@ describe('PatientPrescriptionService', () => {
         ],
       } as never),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('reconstructs perDoseOverrides from relational phase doses on findById', async () => {
+    const { service, repository } = createService();
+
+    repository.findOne.mockResolvedValue({
+      id: 'rx-1',
+      patient: { id: 'patient-1' },
+      medications: [
+        {
+          id: 'med-1',
+          phases: [
+            Object.assign(new PatientPrescriptionPhase(), {
+              id: 'phase-1',
+              phaseOrder: 1,
+              frequency: 2,
+              sameDosePerSchedule: false,
+              doseOverrides: [
+                { id: 'dose-2', doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+                { id: 'dose-1', doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+              ],
+            }),
+          ],
+        },
+      ],
+    });
+
+    const prescription = await service.findById('rx-1');
+    const phase = prescription.medications[0].phases[0];
+
+    expect(phase.perDoseOverrides).toEqual([
+      { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+      { doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+    ]);
+  });
+
+  it('persists variable dose phases through the relational phase dose repository', async () => {
+    const { service, prescriptionRepository, clinicalCatalogService, phaseDoseRepository } =
+      createService();
+
+    clinicalCatalogService.findMedicationById.mockResolvedValue(
+      buildClinicalMedicationWithProtocol({
+        frequencies: [
+          {
+            frequency: 2,
+            allowsVariableDoseBySchedule: true,
+            steps: [
+              {
+                doseLabel: 'D1',
+                anchor: ClinicalAnchor.CAFE,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+              {
+                doseLabel: 'D2',
+                anchor: ClinicalAnchor.JANTAR,
+                offsetMinutes: 0,
+                semanticTag: ClinicalSemanticTag.STANDARD,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    prescriptionRepository.findOne.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      patient: { id: 'patient-1' },
+      medications: [
+        {
+          id: 'prescription-medication-1',
+          sourceClinicalMedicationId: 'clinical-1',
+          sourceProtocolId: 'protocol-1',
+          medicationSnapshot: {
+            id: 'clinical-1',
+            commercialName: 'LOSARTANA',
+            activePrinciple: 'Losartana',
+            presentation: 'Comprimido',
+            administrationRoute: 'VO',
+            usageInstructions: 'Conforme prescricao.',
+          },
+          protocolSnapshot: {
+            id: 'protocol-1',
+            code: 'GROUP_I_STANDARD',
+            name: 'Grupo I',
+            description: 'Protocolo base',
+            groupCode: GroupCode.GROUP_I,
+            priority: 0,
+            isDefault: true,
+            frequencies: [
+              {
+                frequency: 2,
+                allowsVariableDoseBySchedule: true,
+                steps: [
+                  {
+                    doseLabel: 'D1',
+                    anchor: ClinicalAnchor.CAFE,
+                    offsetMinutes: 0,
+                    semanticTag: ClinicalSemanticTag.STANDARD,
+                  },
+                  {
+                    doseLabel: 'D2',
+                    anchor: ClinicalAnchor.JANTAR,
+                    offsetMinutes: 0,
+                    semanticTag: ClinicalSemanticTag.STANDARD,
+                  },
+                ],
+              },
+            ],
+          },
+          interactionRulesSnapshot: [],
+          phases: [
+            Object.assign(new PatientPrescriptionPhase(), {
+              id: 'phase-1',
+              phaseOrder: 1,
+              frequency: 2,
+              sameDosePerSchedule: false,
+              doseOverrides: [
+                { id: 'dose-1', doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+                { id: 'dose-2', doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+              ],
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 10,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            }),
+          ],
+        },
+      ],
+    }));
+
+    await service.create({
+      patientId: 'patient-1',
+      startedAt: '2026-04-21',
+      medications: [
+        {
+          clinicalMedicationId: 'clinical-1',
+          protocolId: 'protocol-1',
+          phases: [
+            {
+              phaseOrder: 1,
+              frequency: 2,
+              sameDosePerSchedule: false,
+              perDoseOverrides: [
+                { doseLabel: 'D1', doseValue: '1', doseUnit: DoseUnit.COMP },
+                { doseLabel: 'D2', doseValue: '2', doseUnit: DoseUnit.COMP },
+              ],
+              recurrenceType: TreatmentRecurrence.DAILY,
+              treatmentDays: 10,
+              continuousUse: false,
+              manualAdjustmentEnabled: false,
+            } as never,
+          ],
+        },
+      ],
+    });
+
+    expect(phaseDoseRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        doseLabel: 'D1',
+        doseValue: '1',
+        doseUnit: DoseUnit.COMP,
+      }),
+    );
+    expect(phaseDoseRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        doseLabel: 'D2',
+        doseValue: '2',
+        doseUnit: DoseUnit.COMP,
+      }),
+    );
   });
 });

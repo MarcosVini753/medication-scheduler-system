@@ -27,8 +27,10 @@ import {
   ClinicalInteractionRuleSnapshot,
   ClinicalMedicationSnapshot,
   ClinicalProtocolSnapshot,
+  PrescriptionPhaseDoseOverride,
 } from './entities/patient-prescription-snapshot.types';
 import { PatientPrescriptionMedication } from './entities/patient-prescription-medication.entity';
+import { PatientPrescriptionPhaseDose } from './entities/patient-prescription-phase-dose.entity';
 import { PatientPrescriptionPhase } from './entities/patient-prescription-phase.entity';
 import { PatientPrescription } from './entities/patient-prescription.entity';
 import { getPhaseValidationError } from './validators/patient-prescription-phase.validator';
@@ -66,6 +68,7 @@ type PrescriptionMedicationPhaseDto = {
     doseValue: string;
     doseUnit: DoseUnit;
   }>;
+  doseOverrides?: PatientPrescriptionPhaseDose[];
 };
 
 type MedicationDomainCapabilities = {
@@ -101,6 +104,7 @@ export class PatientPrescriptionService {
         PatientPrescriptionMedication,
       );
       const phaseRepository = manager.getRepository(PatientPrescriptionPhase);
+      const phaseDoseRepository = manager.getRepository(PatientPrescriptionPhaseDose);
 
       const medications = await Promise.all(
         dto.medications.map(async (medicationDto) => {
@@ -140,6 +144,10 @@ export class PatientPrescriptionService {
               }),
             ),
           });
+          await this.syncPhaseDoseOverridesForPersistence(
+            medication.phases,
+            phaseDoseRepository,
+          );
 
           return medication;
         }),
@@ -180,6 +188,7 @@ export class PatientPrescriptionService {
       const prescriptionRepository = manager.getRepository(PatientPrescription);
       const medicationRepository = manager.getRepository(PatientPrescriptionMedication);
       const phaseRepository = manager.getRepository(PatientPrescriptionPhase);
+      const phaseDoseRepository = manager.getRepository(PatientPrescriptionPhaseDose);
 
       const prescription = await this.loadPrescriptionForMutation(
         prescriptionId,
@@ -208,6 +217,7 @@ export class PatientPrescriptionService {
 
       const nextPhases = [...medication.phases, ...appendedPhases];
       this.ensurePhaseSetIsValidForMedication(medication, nextPhases);
+      await this.syncPhaseDoseOverridesForPersistence(nextPhases, phaseDoseRepository);
 
       medication.phases = nextPhases;
       await medicationRepository.save(medication);
@@ -226,6 +236,7 @@ export class PatientPrescriptionService {
       const prescriptionRepository = manager.getRepository(PatientPrescription);
       const medicationRepository = manager.getRepository(PatientPrescriptionMedication);
       const phaseRepository = manager.getRepository(PatientPrescriptionPhase);
+      const phaseDoseRepository = manager.getRepository(PatientPrescriptionPhaseDose);
 
       const prescription = await this.loadPrescriptionForMutation(
         prescriptionId,
@@ -303,6 +314,10 @@ export class PatientPrescriptionService {
           this.assignSequentialPhaseOrders(replacementPhases);
           this.applyDefaultDoseAmount(replacementPhases);
           this.ensurePhaseSetIsValidForMedication(medication, replacementPhases);
+          await this.syncPhaseDoseOverridesForPersistence(
+            replacementPhases,
+            phaseDoseRepository,
+          );
           medication.phases = replacementPhases;
           continue;
         }
@@ -350,6 +365,7 @@ export class PatientPrescriptionService {
         this.assignSequentialPhaseOrders(phases);
         this.applyDefaultDoseAmount(phases);
         this.ensurePhaseSetIsValidForMedication(medication, phases);
+        await this.syncPhaseDoseOverridesForPersistence(phases, phaseDoseRepository);
         medication.phases = phases;
       }
 
@@ -359,6 +375,7 @@ export class PatientPrescriptionService {
             addMedicationDto,
             medicationRepository,
             phaseRepository,
+            phaseDoseRepository,
           );
           prescription.medications.push(newMedication);
         }
@@ -377,9 +394,10 @@ export class PatientPrescriptionService {
   }
 
   async list(): Promise<PatientPrescription[]> {
-    return this.prescriptionRepository.find({
+    const prescriptions = await this.prescriptionRepository.find({
       relations: ['patient', 'medications', 'medications.phases'],
     });
+    return prescriptions.map((prescription) => this.hydratePrescriptionReadModel(prescription));
   }
 
   async findById(id: string): Promise<PatientPrescription> {
@@ -390,7 +408,7 @@ export class PatientPrescriptionService {
     if (!prescription) {
       throw new NotFoundException('Prescrição do paciente não encontrada.');
     }
-    return prescription;
+    return this.hydratePrescriptionReadModel(prescription);
   }
 
   private async loadPrescriptionForMutation(
@@ -476,6 +494,44 @@ export class PatientPrescriptionService {
         doseAmount: this.resolvePhaseDoseAmount(phase),
       }),
     );
+  }
+
+  private async syncPhaseDoseOverridesForPersistence(
+    phases: PrescriptionMedicationPhaseDto[],
+    phaseDoseRepository: Repository<PatientPrescriptionPhaseDose>,
+  ): Promise<void> {
+    for (const phase of phases) {
+      const previousDoseOverrides = phase.doseOverrides ?? [];
+      const requestedOverrides = phase.sameDosePerSchedule
+        ? []
+        : (phase.perDoseOverrides ?? []);
+      const requestedLabels = new Set(requestedOverrides.map((override) => override.doseLabel));
+      const removableIds = previousDoseOverrides
+        .filter(
+          (doseOverride) =>
+            Boolean(doseOverride.id) && !requestedLabels.has(doseOverride.doseLabel),
+        )
+        .map((doseOverride) => doseOverride.id);
+
+      if (removableIds.length > 0) {
+        await phaseDoseRepository.delete(removableIds);
+      }
+
+      const previousDoseOverrideByLabel = new Map(
+        previousDoseOverrides.map((doseOverride) => [doseOverride.doseLabel, doseOverride]),
+      );
+
+      phase.doseOverrides = requestedOverrides.map((override) =>
+        phaseDoseRepository.create({
+          id: previousDoseOverrideByLabel.get(override.doseLabel)?.id,
+          phase: phase as PatientPrescriptionPhase,
+          doseLabel: override.doseLabel,
+          doseValue: override.doseValue,
+          doseUnit: override.doseUnit,
+        }),
+      );
+      phase.perDoseOverrides = requestedOverrides.length > 0 ? requestedOverrides : undefined;
+    }
   }
 
   private applyDefaultDoseAmount(phases: PrescriptionMedicationPhaseDto[]): void {
@@ -597,6 +653,7 @@ export class PatientPrescriptionService {
     medicationDto: AddPatientPrescriptionMedicationDto,
     medicationRepository: Repository<PatientPrescriptionMedication>,
     phaseRepository: Repository<PatientPrescriptionPhase>,
+    phaseDoseRepository: Repository<PatientPrescriptionPhaseDose>,
   ): Promise<PatientPrescriptionMedication> {
     const clinicalMedication = await this.clinicalCatalogService.findMedicationById(
       medicationDto.clinicalMedicationId,
@@ -619,6 +676,7 @@ export class PatientPrescriptionService {
       phases,
     );
     this.ensureProtocolSupportsPhases(protocolSnapshotFromEntity(protocol), phases);
+    await this.syncPhaseDoseOverridesForPersistence(phases, phaseDoseRepository);
 
     return medicationRepository.create({
       sourceClinicalMedicationId: clinicalMedication.id,
@@ -628,6 +686,15 @@ export class PatientPrescriptionService {
       interactionRulesSnapshot: interactionRulesSnapshotFromEntity(protocol),
       phases,
     });
+  }
+
+  private hydratePrescriptionReadModel(prescription: PatientPrescription): PatientPrescription {
+    prescription.medications.forEach((medication) => {
+      medication.phases.forEach((phase) => {
+        phase.perDoseOverrides = phase.perDoseOverrides;
+      });
+    });
+    return prescription;
   }
 
   private ensureNoDuplicateMedicationProtocolPairs(

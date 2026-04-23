@@ -6,6 +6,7 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
 import { PatientPrescriptionController } from './patient-prescription.controller';
 import { PatientPrescriptionService } from './patient-prescription.service';
 import { PatientPrescriptionMedication } from './entities/patient-prescription-medication.entity';
+import { PatientPrescriptionPhaseDose } from './entities/patient-prescription-phase-dose.entity';
 import { PatientPrescriptionPhase } from './entities/patient-prescription-phase.entity';
 import { PatientPrescription } from './entities/patient-prescription.entity';
 
@@ -15,6 +16,7 @@ import { PatientPrescription } from './entities/patient-prescription.entity';
       PatientPrescription,
       PatientPrescriptionMedication,
       PatientPrescriptionPhase,
+      PatientPrescriptionPhaseDose,
     ]),
     PatientModule,
     ClinicalCatalogModule,

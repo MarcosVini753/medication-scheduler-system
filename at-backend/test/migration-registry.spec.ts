@@ -12,6 +12,7 @@ describe('Migration registry', () => {
     expect(migrationFiles).toEqual([
       '1763406000000-BaselineClinicalCatalogAndPatientPrescriptions.ts',
       '1763488800000-ConvertClinicalTimeColumnsToVarchar.ts',
+      '1763571600000-NormalizePrescriptionPhaseDoseOverrides.ts',
     ]);
   });
 });
