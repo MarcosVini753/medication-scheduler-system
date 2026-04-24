@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sistema AT - Simulação UX</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Fluxo de atendimento">
+        <div class="brand">
+          <div class="brand-mark">AT</div>
+          <div>
+            <strong>Sistema AT</strong>
+            <span>Aprazamento farmacêutico</span>
+          </div>
+        </div>
+
+        <nav class="flow-nav" aria-label="Etapas">
+          <button class="flow-step active" type="button" data-step="patient">
+            <i data-lucide="user-round"></i>
+            <span>Paciente</span>
+          </button>
+          <button class="flow-step" type="button" data-step="routine">
+            <i data-lucide="clock-3"></i>
+            <span>Rotina</span>
+          </button>
+          <button class="flow-step" type="button" data-step="prescription">
+            <i data-lucide="clipboard-list"></i>
+            <span>Prescrição</span>
+          </button>
+          <button class="flow-step" type="button" data-step="calendar">
+            <i data-lucide="calendar-days"></i>
+            <span>Calendário</span>
+          </button>
+        </nav>
+
+        <div class="audit-panel">
+          <span class="panel-label">Estado</span>
+          <div class="audit-row">
+            <span>Paciente</span>
+            <strong id="auditPatient">Pendente</strong>
+          </div>
+          <div class="audit-row">
+            <span>Rotina</span>
+            <strong id="auditRoutine">Pendente</strong>
+          </div>
+          <div class="audit-row">
+            <span>Agenda</span>
+            <strong id="auditSchedule">Não gerada</strong>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Simulação operacional</p>
+            <h1 id="screenTitle">Cadastro do paciente</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" type="button" id="resetDemo" aria-label="Reiniciar simulação" title="Reiniciar simulação">
+              <i data-lucide="rotate-ccw"></i>
+            </button>
+          </div>
+        </header>
+
+        <section class="content-grid">
+          <form class="work-panel screen active" id="patientScreen" data-screen="patient">
+            <div class="panel-head">
+              <h2>Identificação</h2>
+              <span class="status-pill pending" id="patientStatus">Pendente</span>
+            </div>
+            <div class="form-grid">
+              <label>
+                Nome completo
+                <input id="patientName" type="text" value="Maria de Souza" />
+              </label>
+              <label>
+                Nascimento
+                <input id="birthDate" type="date" value="1970-01-01" />
+              </label>
+              <label>
+                CPF
+                <input id="cpf" type="text" value="000.000.000-00" />
+              </label>
+              <label>
+                Telefone
+                <input id="phone" type="text" value="(68) 99999-9999" />
+              </label>
+            </div>
+            <div class="actions">
+              <button class="primary-button" type="button" data-next="routine">
+                <i data-lucide="check"></i>
+                Salvar paciente
+              </button>
+            </div>
+          </form>
+
+          <form class="work-panel screen" id="routineScreen" data-screen="routine">
+            <div class="panel-head">
+              <h2>Rotina diária</h2>
+              <span class="status-pill pending" id="routineStatus">Pendente</span>
+            </div>
+            <div class="routine-grid">
+              <label>Acordar<input id="wakeTime" type="time" value="06:00" /></label>
+              <label>Café<input id="breakfastTime" type="time" value="07:00" /></label>
+              <label>Almoço<input id="lunchTime" type="time" value="13:00" /></label>
+              <label>Lanche<input id="snackTime" type="time" value="16:00" /></label>
+              <label>Jantar<input id="dinnerTime" type="time" value="19:00" /></label>
+              <label>Dormir<input id="sleepTime" type="time" value="21:00" /></label>
+              <label>Banho<input id="bathTime" type="time" value="08:30" /></label>
+            </div>
+            <div class="timeline" id="routineTimeline"></div>
+            <div class="actions">
+              <button class="secondary-button" type="button" data-next="patient">
+                <i data-lucide="arrow-left"></i>
+                Voltar
+              </button>
+              <button class="primary-button" type="button" data-next="prescription">
+                <i data-lucide="check"></i>
+                Salvar rotina
+              </button>
+            </div>
+          </form>
+
+          <section class="work-panel screen" id="prescriptionScreen" data-screen="prescription">
+            <div class="panel-head">
+              <h2>Medicamentos</h2>
+              <span class="status-pill pending" id="prescriptionStatus">Em edição</span>
+            </div>
+
+            <div class="catalog-toolbar">
+              <button class="chip active" type="button" data-preset="baseline">Prescrição base</button>
+              <button class="chip" type="button" data-preset="conflict">Com conflitos</button>
+              <button class="chip" type="button" data-preset="manual">Com ajuste manual</button>
+            </div>
+
+            <div class="medication-list" id="medicationList"></div>
+
+            <div class="actions">
+              <button class="secondary-button" type="button" data-next="routine">
+                <i data-lucide="arrow-left"></i>
+                Voltar
+              </button>
+              <button class="primary-button" type="button" id="generateSchedule">
+                <i data-lucide="calendar-plus"></i>
+                Gerar calendário
+              </button>
+            </div>
+          </section>
+
+          <section class="screen calendar-layout" id="calendarScreen" data-screen="calendar">
+            <div class="calendar-main">
+              <div class="calendar-header">
+                <div>
+                  <p class="eyebrow">Calendário posológico</p>
+                  <h2 id="calendarPatientName">Paciente</h2>
+                </div>
+                <button class="secondary-button" type="button" id="backToPrescription">
+                  <i data-lucide="clipboard-pen"></i>
+                  Editar prescrição
+                </button>
+              </div>
+
+              <div class="day-strip" id="dayStrip"></div>
+              <div class="dose-board" id="doseBoard"></div>
+            </div>
+
+            <aside class="detail-panel">
+              <span class="panel-label">Dose selecionada</span>
+              <div id="doseDetails" class="dose-details"></div>
+            </aside>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="manualDialog" class="manual-dialog">
+      <form method="dialog">
+        <div class="panel-head">
+          <h2>Ajuste manual</h2>
+          <button class="icon-button" value="cancel" type="submit" aria-label="Fechar" title="Fechar">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+        <div class="manual-summary" id="manualSummary"></div>
+        <label>
+          Novo horário
+          <input id="manualTimeInput" type="time" />
+        </label>
+        <label>
+          Motivo
+          <select id="manualReason">
+            <option value="Preferência clínica do farmacêutico">Preferência clínica do farmacêutico</option>
+            <option value="Rotina informada pelo paciente">Rotina informada pelo paciente</option>
+            <option value="Conflito resolvido presencialmente">Conflito resolvido presencialmente</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button class="secondary-button" value="cancel" type="submit">Cancelar</button>
+          <button class="primary-button" id="confirmManualAdjust" value="default" type="button">
+            <i data-lucide="save"></i>
+            Aplicar
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
