@@ -149,22 +149,29 @@ POST /patients
 POST /patients/:id/routines
 ```
 
-### Criar medicamento
+### Catálogo clínico
 
 ```
-POST /medications
+POST   /clinical-catalog/seed         # Popular catálogo com dados iniciais
+GET    /clinical-catalog/groups       # Listar grupos clínicos
+POST   /clinical-catalog/medications  # Criar medicamento no catálogo
+GET    /clinical-catalog/medications  # Listar medicamentos do catálogo
 ```
 
-### Criar prescrição
+### Prescrições do paciente
 
 ```
-POST /prescriptions
+POST   /patient-prescriptions                                           # Criar prescrição
+GET    /patient-prescriptions                                           # Listar prescrições
+GET    /patient-prescriptions/:id                                       # Buscar prescrição por ID
+PATCH  /patient-prescriptions/:id                                       # Atualizar prescrição
+POST   /patient-prescriptions/:id/medications/:prescriptionMedicationId/phases  # Adicionar fases a um medicamento da prescrição
 ```
 
 ### Gerar agenda
 
 ```
-GET /prescriptions/:id/schedule
+GET /patient-prescriptions/:id/schedule
 ```
 
 ---
