@@ -103,7 +103,16 @@ export interface CreatePatientPrescriptionPhaseDto {
   doseAmount?: string;
   doseValue?: string;
   doseUnit?: DoseUnit;
+  perDoseOverrides?: Array<{
+    doseLabel: string;
+    doseValue: string;
+    doseUnit: DoseUnit;
+  }>;
   recurrenceType: TreatmentRecurrence;
+  weeklyDay?: string;
+  monthlyDay?: number;
+  alternateDaysInterval?: number;
+  prnReason?: string;
   treatmentDays?: number;
   continuousUse: boolean;
   manualAdjustmentEnabled: boolean;

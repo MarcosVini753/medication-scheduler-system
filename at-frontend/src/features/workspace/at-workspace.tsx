@@ -12,12 +12,14 @@ import {
   FileWarning,
   History,
   Loader2,
+  Plus,
   RotateCcw,
   Save,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useFieldArray, useForm, type UseFormReturn } from "react-hook-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, inputClassName } from "@/components/ui/field";
@@ -32,6 +34,8 @@ import {
   routineFormSchema,
   type ManualAdjustmentValues,
   type PatientFormValues,
+  type PrescriptionMedicationFormValues,
+  type PrescriptionPhaseFormValues,
   type PrescriptionFormValues,
   type RoutineFormValues,
 } from "@/lib/schemas/forms";
@@ -39,9 +43,12 @@ import type {
   CalendarScheduleResponseDto,
   ClinicalMedication,
   ClinicalProtocol,
+  ClinicalProtocolFrequency,
+  DoseUnit,
   Patient,
   PatientRoutine,
   PatientPrescription,
+  TreatmentRecurrence,
 } from "@/types/contracts";
 import { doseBorderClass, flattenDoses, statusVariant, toDoseUnitLabel } from "./formatters";
 
@@ -56,12 +63,30 @@ const steps: Array<{ id: StepId; label: string; icon: React.ElementType }> = [
   { id: "calendar", label: "Calendário", icon: CalendarDays },
 ];
 
-const recurrenceOptions = [
+const recurrenceOptions: Array<{ value: TreatmentRecurrence; label: string }> = [
   { value: "DAILY", label: "Diário" },
   { value: "WEEKLY", label: "Semanal" },
   { value: "MONTHLY", label: "Mensal" },
   { value: "ALTERNATE_DAYS", label: "Dias alternados" },
   { value: "PRN", label: "Se necessário" },
+];
+
+const weeklyDayOptions = [
+  { value: "SEGUNDA", label: "Segunda-feira" },
+  { value: "TERCA", label: "Terça-feira" },
+  { value: "QUARTA", label: "Quarta-feira" },
+  { value: "QUINTA", label: "Quinta-feira" },
+  { value: "SEXTA", label: "Sexta-feira" },
+  { value: "SABADO", label: "Sábado" },
+  { value: "DOMINGO", label: "Domingo" },
+];
+
+const prnReasonOptions = [
+  { value: "CRISIS", label: "Crise" },
+  { value: "FEVER", label: "Febre" },
+  { value: "PAIN", label: "Dor" },
+  { value: "NAUSEA_VOMITING", label: "Náusea ou vômito" },
+  { value: "SHORTNESS_OF_BREATH", label: "Falta de ar" },
 ];
 
 const doseUnits = ["COMP", "CP", "CAPS", "ML", "GOTAS", "UI", "UNIDADE", "SACHE", "JATO", "APLICACAO"];
@@ -84,26 +109,68 @@ const emptyRoutineForm: RoutineFormValues = {
   banho: "",
 };
 
+function emptyPrescriptionPhaseForm(overrides: Partial<PrescriptionPhaseFormValues> = {}): PrescriptionPhaseFormValues {
+  return {
+    frequency: 0,
+    sameDosePerSchedule: true,
+    doseValue: "",
+    doseUnit: "",
+    perDoseOverrides: [],
+    recurrenceType: "DAILY",
+    weeklyDay: undefined,
+    monthlyDay: undefined,
+    alternateDaysInterval: undefined,
+    prnReason: undefined,
+    treatmentDays: undefined,
+    continuousUse: false,
+    manualAdjustmentEnabled: false,
+    manualTimes: [],
+    ...overrides,
+  };
+}
+
+function emptyPrescriptionMedicationForm(): PrescriptionMedicationFormValues {
+  return {
+    clinicalMedicationId: "",
+    protocolId: "",
+    phases: [emptyPrescriptionPhaseForm()],
+  };
+}
+
 const emptyPrescriptionForm: PrescriptionFormValues = {
   startedAt: "",
-  clinicalMedicationId: "",
-  protocolId: "",
-  frequency: 0,
-  doseValue: "",
-  doseUnit: "",
-  recurrenceType: "DAILY",
-  treatmentDays: undefined,
-  continuousUse: false,
-  manualAdjustmentEnabled: false,
-  manualTimes: [],
+  medications: [emptyPrescriptionMedicationForm()],
 };
+
+function createPerDoseOverrides(frequency: number, doseValue = "", doseUnit = "") {
+  return Array.from({ length: Math.max(frequency, 0) }, (_, index) => ({
+    doseLabel: `D${index + 1}`,
+    doseValue,
+    doseUnit,
+  }));
+}
+
+function resizePerDoseOverrides(
+  frequency: number,
+  currentOverrides: PrescriptionPhaseFormValues["perDoseOverrides"],
+  doseValue = "",
+  doseUnit = "",
+) {
+  return Array.from({ length: Math.max(frequency, 0) }, (_, index) => {
+    const doseLabel = `D${index + 1}`;
+    const current = currentOverrides?.find((override) => override.doseLabel === doseLabel);
+    return {
+      doseLabel,
+      doseValue: current?.doseValue ?? doseValue,
+      doseUnit: current?.doseUnit ?? doseUnit,
+    };
+  });
+}
 
 export function AtWorkspace() {
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState<StepId>("patient");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [selectedMedicationId, setSelectedMedicationId] = useState("");
-  const [selectedProtocolId, setSelectedProtocolId] = useState("");
   const [schedule, setSchedule] = useState<CalendarScheduleResponseDto | null>(null);
   const [createdPrescription, setCreatedPrescription] = useState<PatientPrescription | null>(null);
   const [selectedDoseKey, setSelectedDoseKey] = useState<string | null>(null);
@@ -133,6 +200,10 @@ export function AtWorkspace() {
     resolver: zodResolver(prescriptionFormSchema),
     defaultValues: emptyPrescriptionForm,
   });
+  const prescriptionMedicationFields = useFieldArray({
+    control: prescriptionForm.control,
+    name: "medications",
+  });
 
   const manualForm = useForm<ManualAdjustmentValues>({
     resolver: zodResolver(manualAdjustmentSchema),
@@ -140,19 +211,7 @@ export function AtWorkspace() {
     defaultValues: { times: [] },
   });
 
-  const selectedMedication = useMemo(
-    () => catalogQuery.data?.find((medication) => medication.id === selectedMedicationId) ?? null,
-    [catalogQuery.data, selectedMedicationId],
-  );
-
-  const selectedProtocol = useMemo(
-    () => selectedMedication?.protocols.find((protocol) => protocol.id === selectedProtocolId) ?? null,
-    [selectedMedication, selectedProtocolId],
-  );
-
-  const selectedFrequency = prescriptionForm.watch("frequency");
-  const manualEnabled = prescriptionForm.watch("manualAdjustmentEnabled");
-  const watchedPrescriptionManualTimes = prescriptionForm.watch("manualTimes") ?? [];
+  const watchedPrescriptionMedications = prescriptionForm.watch("medications");
   const watchedCpf = patientForm.watch("cpf") ?? "";
   const normalizedWatchedCpf = normalizeCpf(watchedCpf) ?? "";
   const duplicatePatientByCpf =
@@ -177,11 +236,13 @@ export function AtWorkspace() {
     selectedPhaseDoses.length > 0 &&
     watchedManualTimes.length === selectedPhaseDoses.length &&
     watchedManualTimes.every((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time));
-  const prescriptionManualTimesAreComplete =
-    !manualEnabled ||
-    (selectedFrequency > 0 &&
-      watchedPrescriptionManualTimes.length === selectedFrequency &&
-      watchedPrescriptionManualTimes.every((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time)));
+  const prescriptionCardsAreComplete =
+    watchedPrescriptionMedications.length > 0 &&
+    watchedPrescriptionMedications.every((medication) => {
+      const catalogMedication = resolveMedication(catalogQuery.data ?? [], medication.clinicalMedicationId);
+      const protocol = resolveProtocol(catalogMedication, medication.protocolId);
+      return isPrescriptionMedicationComplete(medication, protocol);
+    });
 
   useEffect(() => {
     if (!selectedPhaseDoses.length) {
@@ -212,17 +273,6 @@ export function AtWorkspace() {
       banho: activeRoutine.banho ?? "",
     });
   }, [activeRoutine, routineForm]);
-
-  useEffect(() => {
-    if (!manualEnabled || selectedFrequency <= 0) {
-      prescriptionForm.setValue("manualTimes", []);
-      return;
-    }
-
-    const currentTimes = prescriptionForm.getValues("manualTimes") ?? [];
-    const nextTimes = Array.from({ length: selectedFrequency }, (_, index) => currentTimes[index] ?? "");
-    prescriptionForm.setValue("manualTimes", nextTimes, { shouldValidate: true });
-  }, [manualEnabled, prescriptionForm, selectedFrequency]);
 
   const createPatientMutation = useMutation({
     mutationFn: (values: PatientFormValues) =>
@@ -272,38 +322,55 @@ export function AtWorkspace() {
   const createPrescriptionMutation = useMutation({
     mutationFn: async (values: PrescriptionFormValues) => {
       if (!selectedPatient) throw new Error("Selecione um paciente antes de criar a prescrição.");
-      if (!selectedMedication || !selectedProtocol) throw new Error("Selecione medicamento e protocolo.");
+      const catalog = catalogQuery.data ?? [];
+      const medicationIds = values.medications.map((medication) => medication.clinicalMedicationId);
 
       const result = await prescriptionService.create({
         patientId: selectedPatient.id,
         startedAt: values.startedAt,
-        medications: [
-          {
+        medications: values.medications.map((medication) => {
+          const selectedMedication = resolveMedication(catalog, medication.clinicalMedicationId);
+          const selectedProtocol = resolveProtocol(selectedMedication, medication.protocolId);
+          if (!selectedMedication || !selectedProtocol) {
+            throw new Error("Selecione medicamento e protocolo para todos os itens da prescrição.");
+          }
+
+          return {
             clinicalMedicationId: selectedMedication.id,
             protocolId: selectedProtocol.id,
-            phases: [
-              {
-                phaseOrder: 1,
-                frequency: values.frequency,
-                sameDosePerSchedule: true,
-                doseValue: values.doseValue,
-                doseUnit: values.doseUnit as never,
-                doseAmount: `${values.doseValue} ${values.doseUnit}`,
-                recurrenceType: values.recurrenceType,
-                treatmentDays: values.continuousUse ? undefined : values.treatmentDays,
-                continuousUse: values.continuousUse,
-                manualAdjustmentEnabled: values.manualAdjustmentEnabled,
-                manualTimes: values.manualAdjustmentEnabled ? values.manualTimes : undefined,
-              },
-            ],
-          },
-        ],
+            phases: medication.phases.map((phase, phaseIndex) => ({
+              phaseOrder: phaseIndex + 1,
+              frequency: phase.frequency,
+              sameDosePerSchedule: phase.sameDosePerSchedule,
+              doseValue: phase.sameDosePerSchedule ? phase.doseValue : undefined,
+              doseUnit: phase.sameDosePerSchedule ? (phase.doseUnit as DoseUnit) : undefined,
+              doseAmount: phase.sameDosePerSchedule ? `${phase.doseValue} ${phase.doseUnit}` : undefined,
+              perDoseOverrides: phase.sameDosePerSchedule
+                ? undefined
+                : phase.perDoseOverrides?.map((override) => ({
+                    doseLabel: override.doseLabel,
+                    doseValue: override.doseValue,
+                    doseUnit: override.doseUnit as DoseUnit,
+                  })),
+              recurrenceType: phase.recurrenceType,
+              weeklyDay: phase.recurrenceType === "WEEKLY" ? phase.weeklyDay : undefined,
+              monthlyDay: phase.recurrenceType === "MONTHLY" ? phase.monthlyDay : undefined,
+              alternateDaysInterval:
+                phase.recurrenceType === "ALTERNATE_DAYS" ? phase.alternateDaysInterval : undefined,
+              prnReason: phase.recurrenceType === "PRN" ? phase.prnReason : undefined,
+              treatmentDays: phase.continuousUse ? undefined : phase.treatmentDays,
+              continuousUse: phase.continuousUse,
+              manualAdjustmentEnabled: phase.manualAdjustmentEnabled,
+              manualTimes: phase.manualAdjustmentEnabled ? phase.manualTimes : undefined,
+            })),
+          };
+        }),
       });
 
       const prescriptions = await prescriptionService.list();
       return {
         result,
-        prescription: resolveCreatedPrescription(prescriptions, selectedPatient.id, values.startedAt, selectedMedication.id),
+        prescription: resolveCreatedPrescription(prescriptions, selectedPatient.id, values.startedAt, medicationIds),
       };
     },
     onSuccess: ({ result, prescription }) => {
@@ -365,30 +432,145 @@ export function AtWorkspace() {
     onError: (error) => setMessage({ tone: "error", text: formatApiError(error) }),
   });
 
-  function handleMedicationChange(medicationId: string) {
-    const medication = catalogQuery.data?.find((item) => item.id === medicationId);
-    const defaultProtocol = medication?.protocols.find((protocol) => protocol.isDefault) ?? medication?.protocols[0];
-    const defaultFrequency = defaultProtocol?.frequencies[0];
-    setSelectedMedicationId(medicationId);
-    setSelectedProtocolId(defaultProtocol?.id ?? "");
-    prescriptionForm.setValue("clinicalMedicationId", medicationId);
-    prescriptionForm.setValue("protocolId", defaultProtocol?.id ?? "");
-    prescriptionForm.setValue("frequency", defaultFrequency?.frequency ?? 0);
-    prescriptionForm.setValue("doseUnit", medication?.defaultAdministrationUnit ?? "");
+  function handlePrescriptionMedicationChange(index: number, medicationId: string) {
+    const medication = resolveMedication(catalogQuery.data ?? [], medicationId);
+    prescriptionForm.setValue(`medications.${index}.clinicalMedicationId`, medicationId, { shouldValidate: true });
+    prescriptionForm.setValue(`medications.${index}.protocolId`, "", { shouldValidate: true });
+    prescriptionForm.setValue(
+      `medications.${index}.phases`,
+      [emptyPrescriptionPhaseForm({ doseUnit: medication?.defaultAdministrationUnit ?? "" })],
+      { shouldValidate: true },
+    );
   }
 
-  function handleProtocolChange(protocolId: string) {
-    const protocol = selectedMedication?.protocols.find((item) => item.id === protocolId);
-    setSelectedProtocolId(protocolId);
-    prescriptionForm.setValue("protocolId", protocolId);
-    prescriptionForm.setValue("frequency", protocol?.frequencies[0]?.frequency ?? 0);
+  function handlePrescriptionProtocolChange(index: number, protocolId: string) {
+    const currentPhases = prescriptionForm.getValues(`medications.${index}.phases`);
+    prescriptionForm.setValue(`medications.${index}.protocolId`, protocolId, { shouldValidate: true });
+    prescriptionForm.setValue(
+      `medications.${index}.phases`,
+      currentPhases.map((phase) => ({
+        ...phase,
+        frequency: 0,
+        recurrenceType: "DAILY" as const,
+        weeklyDay: undefined,
+        monthlyDay: undefined,
+        alternateDaysInterval: undefined,
+        prnReason: undefined,
+        sameDosePerSchedule: true,
+        perDoseOverrides: [],
+        manualTimes: [],
+      })),
+      { shouldValidate: true },
+    );
+  }
+
+  function clearIncompatibleRecurrenceFields(
+    medicationIndex: number,
+    phaseIndex: number,
+    recurrenceType: TreatmentRecurrence,
+  ) {
+    const phasePath = `medications.${medicationIndex}.phases.${phaseIndex}` as const;
+    if (recurrenceType !== "WEEKLY") {
+      prescriptionForm.setValue(`${phasePath}.weeklyDay`, undefined, { shouldValidate: true });
+    }
+    if (recurrenceType !== "MONTHLY") {
+      prescriptionForm.setValue(`${phasePath}.monthlyDay`, undefined, { shouldValidate: true });
+    }
+    if (recurrenceType !== "ALTERNATE_DAYS") {
+      prescriptionForm.setValue(`${phasePath}.alternateDaysInterval`, undefined, { shouldValidate: true });
+    }
+    if (recurrenceType !== "PRN") {
+      prescriptionForm.setValue(`${phasePath}.prnReason`, undefined, { shouldValidate: true });
+    }
+  }
+
+  function handlePrescriptionFrequencyChange(medicationIndex: number, phaseIndex: number, frequency: number) {
+    const medication = prescriptionForm.getValues(`medications.${medicationIndex}`);
+    const catalogMedication = resolveMedication(catalogQuery.data ?? [], medication.clinicalMedicationId);
+    const protocol = resolveProtocol(catalogMedication, medication.protocolId);
+    const frequencyConfig = resolveFrequencyConfig(protocol, frequency);
+    const phase = prescriptionForm.getValues(`medications.${medicationIndex}.phases.${phaseIndex}`);
+    const currentRecurrence = prescriptionForm.getValues(
+      `medications.${medicationIndex}.phases.${phaseIndex}.recurrenceType`,
+    );
+    const nextRecurrence = isRecurrenceAllowed(currentRecurrence, frequencyConfig)
+      ? currentRecurrence
+      : getDefaultRecurrenceForFrequency(frequencyConfig);
+
+    prescriptionForm.setValue(`medications.${medicationIndex}.phases.${phaseIndex}.frequency`, frequency, {
+      shouldValidate: true,
+    });
+    prescriptionForm.setValue(`medications.${medicationIndex}.phases.${phaseIndex}.recurrenceType`, nextRecurrence, {
+      shouldValidate: true,
+    });
+    clearIncompatibleRecurrenceFields(medicationIndex, phaseIndex, nextRecurrence);
+    const manualAdjustmentEnabled = prescriptionForm.getValues(
+      `medications.${medicationIndex}.phases.${phaseIndex}.manualAdjustmentEnabled`,
+    );
+    prescriptionForm.setValue(
+      `medications.${medicationIndex}.phases.${phaseIndex}.manualTimes`,
+      manualAdjustmentEnabled && frequency > 0 ? Array.from({ length: frequency }, () => "") : [],
+      { shouldValidate: true },
+    );
+    if (!phase.sameDosePerSchedule && frequencyConfig?.allowsVariableDoseBySchedule === true) {
+      prescriptionForm.setValue(
+        `medications.${medicationIndex}.phases.${phaseIndex}.perDoseOverrides`,
+        resizePerDoseOverrides(frequency, phase.perDoseOverrides, phase.doseValue ?? "", phase.doseUnit ?? ""),
+        { shouldValidate: true },
+      );
+    } else {
+      prescriptionForm.setValue(`medications.${medicationIndex}.phases.${phaseIndex}.sameDosePerSchedule`, true, {
+        shouldValidate: true,
+      });
+      prescriptionForm.setValue(`medications.${medicationIndex}.phases.${phaseIndex}.perDoseOverrides`, [], {
+        shouldValidate: true,
+      });
+    }
+  }
+
+  function handlePrescriptionManualEnabledChange(medicationIndex: number, phaseIndex: number, enabled: boolean) {
+    const frequency = prescriptionForm.getValues(`medications.${medicationIndex}.phases.${phaseIndex}.frequency`);
+    prescriptionForm.setValue(`medications.${medicationIndex}.phases.${phaseIndex}.manualAdjustmentEnabled`, enabled, {
+      shouldValidate: true,
+    });
+    prescriptionForm.setValue(
+      `medications.${medicationIndex}.phases.${phaseIndex}.manualTimes`,
+      enabled && frequency > 0 ? Array.from({ length: frequency }, () => "") : [],
+      { shouldValidate: true },
+    );
+  }
+
+  function handlePrescriptionSameDoseChange(medicationIndex: number, phaseIndex: number, sameDosePerSchedule: boolean) {
+    const phase = prescriptionForm.getValues(`medications.${medicationIndex}.phases.${phaseIndex}`);
+    prescriptionForm.setValue(
+      `medications.${medicationIndex}.phases.${phaseIndex}.sameDosePerSchedule`,
+      sameDosePerSchedule,
+      { shouldValidate: true },
+    );
+    prescriptionForm.setValue(
+      `medications.${medicationIndex}.phases.${phaseIndex}.perDoseOverrides`,
+      sameDosePerSchedule ? [] : createPerDoseOverrides(phase.frequency, phase.doseValue ?? "", phase.doseUnit ?? ""),
+      { shouldValidate: true },
+    );
+  }
+
+  function handlePrescriptionRecurrenceChange(
+    medicationIndex: number,
+    phaseIndex: number,
+    recurrenceType: TreatmentRecurrence,
+  ) {
+    const phasePath = `medications.${medicationIndex}.phases.${phaseIndex}` as const;
+    prescriptionForm.setValue(`${phasePath}.recurrenceType`, recurrenceType, { shouldValidate: true });
+    clearIncompatibleRecurrenceFields(medicationIndex, phaseIndex, recurrenceType);
+  }
+
+  function appendPrescriptionMedication() {
+    prescriptionMedicationFields.append(emptyPrescriptionMedicationForm());
   }
 
   function resetFlow() {
     setCurrentStep("patient");
     setSelectedPatient(null);
-    setSelectedMedicationId("");
-    setSelectedProtocolId("");
     setSchedule(null);
     setCreatedPrescription(null);
     setSelectedDoseKey(null);
@@ -651,133 +833,34 @@ export function AtWorkspace() {
               className="grid gap-5"
               onSubmit={prescriptionForm.handleSubmit((values) => createPrescriptionMutation.mutate(values))}
             >
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
                 <Field error={prescriptionForm.formState.errors.startedAt?.message} label="Início">
                   <input className={inputClassName} type="date" {...prescriptionForm.register("startedAt")} />
                 </Field>
-                <Field error={prescriptionForm.formState.errors.clinicalMedicationId?.message} label="Medicamento">
-                  <select
-                    className={inputClassName}
-                    value={selectedMedicationId}
-                    {...prescriptionForm.register("clinicalMedicationId")}
-                    onChange={(event) => handleMedicationChange(event.target.value)}
-                  >
-                    <option value="">Selecione</option>
-                    {catalogQuery.data?.map((medication) => (
-                      <option key={medication.id} value={medication.id}>
-                        {medication.commercialName ?? medication.activePrinciple}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field error={prescriptionForm.formState.errors.protocolId?.message} label="Protocolo">
-                  <select
-                    className={inputClassName}
-                    disabled={!selectedMedication}
-                    value={selectedProtocolId}
-                    {...prescriptionForm.register("protocolId")}
-                    onChange={(event) => handleProtocolChange(event.target.value)}
-                  >
-                    <option value="">Selecione</option>
-                    {selectedMedication?.protocols.map((protocol) => (
-                      <option key={protocol.id} value={protocol.id}>
-                        {protocol.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field error={prescriptionForm.formState.errors.frequency?.message} label="Frequência">
-                  <select className={inputClassName} {...prescriptionForm.register("frequency", { valueAsNumber: true })}>
-                    <option value={0}>Selecione</option>
-                    {selectedProtocol?.frequencies.map((frequency) => (
-                      <option key={frequency.frequency} value={frequency.frequency}>
-                        {frequency.label ?? `${frequency.frequency}x ao dia`}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field error={prescriptionForm.formState.errors.doseValue?.message} label="Dose">
-                  <input className={inputClassName} {...prescriptionForm.register("doseValue")} />
-                </Field>
-                <Field error={prescriptionForm.formState.errors.doseUnit?.message} label="Unidade">
-                  <select className={inputClassName} {...prescriptionForm.register("doseUnit")}>
-                    <option value="">Selecione</option>
-                    {doseUnits.map((unit) => (
-                      <option key={unit} value={unit}>
-                        {unit}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field error={prescriptionForm.formState.errors.recurrenceType?.message} label="Recorrência">
-                  <select className={inputClassName} {...prescriptionForm.register("recurrenceType")}>
-                    {recurrenceOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Dias de tratamento">
-                  <input
-                    className={inputClassName}
-                    disabled={prescriptionForm.watch("continuousUse")}
-                    min={1}
-                    type="number"
-                    {...prescriptionForm.register("treatmentDays")}
+                <Button onClick={appendPrescriptionMedication} type="button" variant="secondary">
+                  <Plus className="size-4" />
+                  Adicionar medicamento
+                </Button>
+              </div>
+
+              <div className="grid gap-4">
+                {prescriptionMedicationFields.fields.map((field, index) => (
+                  <PrescriptionMedicationCard
+                    canRemove={prescriptionMedicationFields.fields.length > 1}
+                    catalog={catalogQuery.data ?? []}
+                    form={prescriptionForm}
+                    index={index}
+                    key={field.id}
+                    onFrequencyChange={handlePrescriptionFrequencyChange}
+                    onManualEnabledChange={handlePrescriptionManualEnabledChange}
+                    onMedicationChange={handlePrescriptionMedicationChange}
+                    onProtocolChange={handlePrescriptionProtocolChange}
+                    onRecurrenceChange={handlePrescriptionRecurrenceChange}
+                    onSameDoseChange={handlePrescriptionSameDoseChange}
+                    onRemove={() => prescriptionMedicationFields.remove(index)}
                   />
-                </Field>
+                ))}
               </div>
-
-              <div className="grid gap-3 rounded-md border bg-muted/40 p-4 lg:grid-cols-2">
-                <label className="flex items-center gap-3 text-sm font-semibold">
-                  <input className="size-4" type="checkbox" {...prescriptionForm.register("continuousUse")} />
-                  Uso contínuo
-                </label>
-                <label className="flex items-center gap-3 text-sm font-semibold">
-                  <input className="size-4" type="checkbox" {...prescriptionForm.register("manualAdjustmentEnabled")} />
-                  Farmacêutico definirá horários manualmente
-                </label>
-              </div>
-
-              {manualEnabled ? (
-                <div className="rounded-md border border-warning/30 bg-warning/10 p-4">
-                  <h3 className="mb-1 font-bold text-warning">Ajuste manual da fase</h3>
-                  <p className="mb-4 text-sm text-warning">
-                    O ajuste manual vale para a fase inteira; informe todos os horários da fase.
-                  </p>
-                  {selectedFrequency > 0 ? (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      {Array.from({ length: selectedFrequency }, (_, index) => (
-                        <Field
-                          error={prescriptionForm.formState.errors.manualTimes?.[index]?.message}
-                          key={`manual-time-${index}`}
-                          label={`D${index + 1}`}
-                        >
-                          <input
-                            className={inputClassName}
-                            type="time"
-                            {...prescriptionForm.register(`manualTimes.${index}` as const)}
-                          />
-                        </Field>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm font-semibold text-warning">
-                      Selecione uma frequência para informar os horários manuais.
-                    </p>
-                  )}
-                  {!prescriptionManualTimesAreComplete ? (
-                    <p className="mt-3 text-sm font-semibold text-warning">
-                      Todos os horários manuais devem estar preenchidos em HH:mm.
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {selectedMedication && selectedProtocol ? (
-                <PrescriptionPreview medication={selectedMedication} protocol={selectedProtocol} frequency={selectedFrequency} />
-              ) : null}
 
               <div className="flex justify-between gap-3">
                 <Button onClick={() => setCurrentStep("routine")} type="button" variant="secondary">
@@ -786,8 +869,9 @@ export function AtWorkspace() {
                 <Button
                   disabled={
                     !selectedPatient ||
-                    createPrescriptionMutation.isPending ||
-                    !prescriptionManualTimesAreComplete
+                    !prescriptionForm.watch("startedAt") ||
+                    !prescriptionCardsAreComplete ||
+                    createPrescriptionMutation.isPending
                   }
                   type="submit"
                 >
@@ -933,12 +1017,469 @@ function RoutineTimeline({ values }: { values: RoutineFormValues }) {
   );
 }
 
+function PrescriptionMedicationCard({
+  canRemove,
+  catalog,
+  form,
+  index,
+  onFrequencyChange,
+  onManualEnabledChange,
+  onMedicationChange,
+  onProtocolChange,
+  onRecurrenceChange,
+  onSameDoseChange,
+  onRemove,
+}: {
+  canRemove: boolean;
+  catalog: ClinicalMedication[];
+  form: UseFormReturn<PrescriptionFormValues>;
+  index: number;
+  onFrequencyChange: (medicationIndex: number, phaseIndex: number, frequency: number) => void;
+  onManualEnabledChange: (medicationIndex: number, phaseIndex: number, enabled: boolean) => void;
+  onMedicationChange: (index: number, medicationId: string) => void;
+  onProtocolChange: (index: number, protocolId: string) => void;
+  onRecurrenceChange: (medicationIndex: number, phaseIndex: number, recurrenceType: TreatmentRecurrence) => void;
+  onSameDoseChange: (medicationIndex: number, phaseIndex: number, sameDosePerSchedule: boolean) => void;
+  onRemove: () => void;
+}) {
+  const values = form.watch(`medications.${index}`) ?? emptyPrescriptionMedicationForm();
+  const errors = form.formState.errors.medications?.[index];
+  const selectedMedication = resolveMedication(catalog, values.clinicalMedicationId);
+  const selectedProtocol = resolveProtocol(selectedMedication, values.protocolId);
+  const phaseFields = useFieldArray({
+    control: form.control,
+    name: `medications.${index}.phases`,
+  });
+
+  function appendPhase() {
+    const currentPhases = form.getValues(`medications.${index}.phases`);
+    const previousPhase = currentPhases.at(-1) ?? emptyPrescriptionPhaseForm();
+    if (previousPhase.continuousUse && currentPhases.length > 0) {
+      form.setValue(`medications.${index}.phases.${currentPhases.length - 1}.continuousUse`, false, {
+        shouldValidate: true,
+      });
+    }
+
+    phaseFields.append({
+      ...previousPhase,
+      perDoseOverrides: previousPhase.sameDosePerSchedule
+        ? []
+        : resizePerDoseOverrides(
+            previousPhase.frequency,
+            previousPhase.perDoseOverrides,
+            previousPhase.doseValue ?? "",
+            previousPhase.doseUnit ?? "",
+          ),
+      manualTimes:
+        previousPhase.manualAdjustmentEnabled && previousPhase.frequency > 0
+          ? Array.from({ length: previousPhase.frequency }, () => "")
+          : [],
+    });
+  }
+
+  return (
+    <article className="rounded-md border bg-white p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-bold">Medicamento {index + 1}</h3>
+          <p className="text-sm text-muted-foreground">{phaseFields.fields.length} fase(s) de tratamento</p>
+        </div>
+        <Button disabled={!canRemove} onClick={onRemove} size="sm" type="button" variant="secondary">
+          <Trash2 className="size-4" />
+          Remover
+        </Button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Field error={errors?.clinicalMedicationId?.message} label="Medicamento">
+          <select
+            className={inputClassName}
+            onChange={(event) => onMedicationChange(index, event.target.value)}
+            value={values.clinicalMedicationId}
+          >
+            <option value="">Selecione</option>
+            {catalog.map((medication) => (
+              <option key={medication.id} value={medication.id}>
+                {medication.commercialName ?? medication.activePrinciple}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field error={errors?.protocolId?.message} label="Protocolo">
+          <select
+            className={inputClassName}
+            disabled={!selectedMedication}
+            onChange={(event) => onProtocolChange(index, event.target.value)}
+            value={values.protocolId}
+          >
+            <option value="">Selecione</option>
+            {selectedMedication?.protocols.map((protocol) => (
+              <option key={protocol.id} value={protocol.id}>
+                {protocol.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <div className="mt-4 grid gap-3">
+        {phaseFields.fields.map((field, phaseIndex) => (
+          <PrescriptionPhaseCard
+            canRemove={phaseFields.fields.length > 1}
+            form={form}
+            isLastPhase={phaseIndex === phaseFields.fields.length - 1}
+            key={field.id}
+            medicationIndex={index}
+            onFrequencyChange={onFrequencyChange}
+            onManualEnabledChange={onManualEnabledChange}
+            onRecurrenceChange={onRecurrenceChange}
+            onSameDoseChange={onSameDoseChange}
+            onRemove={() => phaseFields.remove(phaseIndex)}
+            phase={values.phases[phaseIndex] ?? emptyPrescriptionPhaseForm()}
+            phaseIndex={phaseIndex}
+            protocol={selectedProtocol}
+          />
+        ))}
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <Button disabled={!selectedProtocol} onClick={appendPhase} size="sm" type="button" variant="secondary">
+          <Plus className="size-4" />
+          Adicionar fase
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+function PrescriptionPhaseCard({
+  canRemove,
+  form,
+  isLastPhase,
+  medicationIndex,
+  onFrequencyChange,
+  onManualEnabledChange,
+  onRecurrenceChange,
+  onSameDoseChange,
+  onRemove,
+  phase,
+  phaseIndex,
+  protocol,
+}: {
+  canRemove: boolean;
+  form: UseFormReturn<PrescriptionFormValues>;
+  isLastPhase: boolean;
+  medicationIndex: number;
+  onFrequencyChange: (medicationIndex: number, phaseIndex: number, frequency: number) => void;
+  onManualEnabledChange: (medicationIndex: number, phaseIndex: number, enabled: boolean) => void;
+  onRecurrenceChange: (medicationIndex: number, phaseIndex: number, recurrenceType: TreatmentRecurrence) => void;
+  onSameDoseChange: (medicationIndex: number, phaseIndex: number, sameDosePerSchedule: boolean) => void;
+  onRemove: () => void;
+  phase: PrescriptionPhaseFormValues;
+  phaseIndex: number;
+  protocol: ClinicalProtocol | null;
+}) {
+  const selectedFrequency = Number(phase.frequency) || 0;
+  const selectedFrequencyConfig = resolveFrequencyConfig(protocol, selectedFrequency);
+  const allowedRecurrenceOptions = getAllowedRecurrenceOptions(selectedFrequencyConfig);
+  const variableDoseAllowed = selectedFrequencyConfig?.allowsVariableDoseBySchedule === true;
+  const manualTimesAreComplete = isPrescriptionPhaseManualTimesComplete(phase);
+  const perDoseOverridesAreComplete = isPrescriptionPhasePerDoseOverridesComplete(phase, selectedFrequencyConfig);
+  const errors = form.formState.errors.medications?.[medicationIndex]?.phases?.[phaseIndex];
+  const phaseName = `medications.${medicationIndex}.phases.${phaseIndex}` as const;
+  const hasProtocolFrequencies = (protocol?.frequencies.length ?? 0) > 0;
+
+  return (
+    <section className="rounded-md border bg-muted/20 p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="font-bold">Fase {phaseIndex + 1}</h4>
+          <p className="text-sm text-muted-foreground">
+            {isLastPhase ? "Pode ser contínua" : "Fase intermediária exige dias de tratamento"}
+          </p>
+        </div>
+        <Button disabled={!canRemove} onClick={onRemove} size="sm" type="button" variant="secondary">
+          <Trash2 className="size-4" />
+          Remover fase
+        </Button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Field error={errors?.frequency?.message} label="Frequência">
+          <select
+            className={inputClassName}
+            disabled={!protocol || !hasProtocolFrequencies}
+            onChange={(event) => onFrequencyChange(medicationIndex, phaseIndex, Number(event.target.value))}
+            value={selectedFrequency}
+          >
+            <option value={0}>Selecione</option>
+            {protocol?.frequencies.map((frequency) => (
+              <option key={frequency.frequency} value={frequency.frequency}>
+                {frequency.label ?? `${frequency.frequency}x ao dia`}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {phase.sameDosePerSchedule ? (
+          <>
+            <Field error={errors?.doseValue?.message} label="Dose">
+              <input className={inputClassName} {...form.register(`${phaseName}.doseValue`)} />
+            </Field>
+            <Field error={errors?.doseUnit?.message} label="Unidade">
+              <select className={inputClassName} {...form.register(`${phaseName}.doseUnit`)}>
+                <option value="">Selecione</option>
+                {doseUnits.map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </>
+        ) : null}
+        <Field error={errors?.recurrenceType?.message} label="Recorrência">
+          <select
+            className={inputClassName}
+            disabled={!selectedFrequencyConfig || allowedRecurrenceOptions.length === 0}
+            onChange={(event) =>
+              onRecurrenceChange(medicationIndex, phaseIndex, event.target.value as TreatmentRecurrence)
+            }
+            value={phase.recurrenceType}
+          >
+            {allowedRecurrenceOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Dias de tratamento">
+          <input
+            className={inputClassName}
+            disabled={phase.continuousUse}
+            min={1}
+            type="number"
+            {...form.register(`${phaseName}.treatmentDays`, { valueAsNumber: true })}
+          />
+        </Field>
+      </div>
+
+      {phase.recurrenceType !== "DAILY" ? (
+        <div className="mt-4 grid gap-4 rounded-md border bg-white p-4 lg:grid-cols-3">
+          {phase.recurrenceType === "WEEKLY" ? (
+            <Field error={errors?.weeklyDay?.message} label="Dia da semana">
+              <select className={inputClassName} {...form.register(`${phaseName}.weeklyDay`)}>
+                <option value="">Selecione</option>
+                {weeklyDayOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
+
+          {phase.recurrenceType === "MONTHLY" ? (
+            <Field error={errors?.monthlyDay?.message} label="Dia do mês">
+              <input
+                className={inputClassName}
+                max={31}
+                min={1}
+                type="number"
+                {...form.register(`${phaseName}.monthlyDay`, { valueAsNumber: true })}
+              />
+            </Field>
+          ) : null}
+
+          {phase.recurrenceType === "ALTERNATE_DAYS" ? (
+            <Field error={errors?.alternateDaysInterval?.message} label="Intervalo em dias">
+              <input
+                className={inputClassName}
+                min={2}
+                type="number"
+                {...form.register(`${phaseName}.alternateDaysInterval`, { valueAsNumber: true })}
+              />
+            </Field>
+          ) : null}
+
+          {phase.recurrenceType === "PRN" ? (
+            <Field error={errors?.prnReason?.message} label="Motivo">
+              <select className={inputClassName} {...form.register(`${phaseName}.prnReason`)}>
+                <option value="">Selecione</option>
+                {prnReasonOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!protocol ? (
+        <p className="mt-3 text-sm font-semibold text-warning">
+          Selecione um protocolo para escolher frequências e recorrências.
+        </p>
+      ) : null}
+      {protocol && !hasProtocolFrequencies ? (
+        <p className="mt-3 text-sm font-semibold text-warning">
+          Este protocolo não possui frequências cadastradas.
+        </p>
+      ) : null}
+      {protocol && hasProtocolFrequencies && selectedFrequency > 0 && allowedRecurrenceOptions.length === 0 ? (
+        <p className="mt-3 text-sm font-semibold text-warning">
+          Esta frequência não possui recorrências permitidas.
+        </p>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 rounded-md border bg-white p-4 lg:grid-cols-3">
+        <label className="flex items-center gap-3 text-sm font-semibold">
+          <input
+            checked={phase.sameDosePerSchedule}
+            className="size-4"
+            disabled={selectedFrequency <= 0 || !variableDoseAllowed}
+            onChange={(event) => onSameDoseChange(medicationIndex, phaseIndex, event.target.checked)}
+            type="checkbox"
+          />
+          Dose igual em todos os horários
+        </label>
+        <label className="flex items-center gap-3 text-sm font-semibold">
+          <input
+            checked={phase.continuousUse}
+            className="size-4"
+            disabled={!isLastPhase}
+            onChange={(event) => {
+              form.setValue(`${phaseName}.continuousUse`, event.target.checked, { shouldValidate: true });
+              if (event.target.checked) {
+                form.setValue(`${phaseName}.treatmentDays`, undefined, { shouldValidate: true });
+              }
+            }}
+            type="checkbox"
+          />
+          Uso contínuo
+        </label>
+        <label className="flex items-center gap-3 text-sm font-semibold">
+          <input
+            checked={phase.manualAdjustmentEnabled}
+            className="size-4"
+            onChange={(event) => onManualEnabledChange(medicationIndex, phaseIndex, event.target.checked)}
+            type="checkbox"
+          />
+          Farmacêutico definirá horários manualmente
+        </label>
+      </div>
+
+      {selectedFrequency > 0 && !variableDoseAllowed ? (
+        <p className="mt-3 text-sm font-semibold text-muted-foreground">
+          Este protocolo não aceita dose variável para a frequência selecionada.
+        </p>
+      ) : null}
+
+      {!isLastPhase && phase.continuousUse ? (
+        <p className="mt-3 text-sm font-semibold text-warning">
+          Uso contínuo só pode ficar ativo na última fase.
+        </p>
+      ) : null}
+
+      {!phase.sameDosePerSchedule ? (
+        <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-4">
+          <h3 className="mb-1 font-bold text-primary">Dose por horário da fase</h3>
+          <p className="mb-4 text-sm text-primary">
+            Informe dose e unidade para todos os horários da fase.
+          </p>
+          {selectedFrequency > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: selectedFrequency }, (_, overrideIndex) => (
+                <div
+                  className="grid gap-3 rounded-md border bg-white p-3"
+                  key={`medication-${medicationIndex}-phase-${phaseIndex}-dose-override-${overrideIndex}`}
+                >
+                  <strong className="text-sm">D{overrideIndex + 1}</strong>
+                  <input
+                    type="hidden"
+                    value={`D${overrideIndex + 1}`}
+                    {...form.register(`${phaseName}.perDoseOverrides.${overrideIndex}.doseLabel`)}
+                  />
+                  <Field label="Dose">
+                    <input
+                      className={inputClassName}
+                      {...form.register(`${phaseName}.perDoseOverrides.${overrideIndex}.doseValue`)}
+                    />
+                  </Field>
+                  <Field label="Unidade">
+                    <select
+                      className={inputClassName}
+                      {...form.register(`${phaseName}.perDoseOverrides.${overrideIndex}.doseUnit`)}
+                    >
+                      <option value="">Selecione</option>
+                      {doseUnits.map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unit}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm font-semibold text-primary">
+              Selecione uma frequência para informar doses por horário.
+            </p>
+          )}
+          {!perDoseOverridesAreComplete ? (
+            <p className="mt-3 text-sm font-semibold text-warning">
+              Todas as doses por horário devem estar preenchidas e corresponder à frequência da fase.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {phase.manualAdjustmentEnabled ? (
+        <div className="mt-4 rounded-md border border-warning/30 bg-warning/10 p-4">
+          <h3 className="mb-1 font-bold text-warning">Ajuste manual da fase</h3>
+          <p className="mb-4 text-sm text-warning">
+            O ajuste manual vale para a fase inteira; informe todos os horários da fase.
+          </p>
+          {selectedFrequency > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: selectedFrequency }, (_, manualIndex) => (
+                <Field
+                  error={errors?.manualTimes?.[manualIndex]?.message}
+                  key={`medication-${medicationIndex}-phase-${phaseIndex}-manual-time-${manualIndex}`}
+                  label={`D${manualIndex + 1}`}
+                >
+                  <input
+                    className={inputClassName}
+                    type="time"
+                    {...form.register(`${phaseName}.manualTimes.${manualIndex}`)}
+                  />
+                </Field>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm font-semibold text-warning">
+              Selecione uma frequência para informar os horários manuais.
+            </p>
+          )}
+          {!manualTimesAreComplete ? (
+            <p className="mt-3 text-sm font-semibold text-warning">
+              Todos os horários manuais devem estar preenchidos em HH:mm.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {protocol ? <PrescriptionPreview frequency={selectedFrequency} protocol={protocol} /> : null}
+    </section>
+  );
+}
+
 function PrescriptionPreview({
-  medication,
   protocol,
   frequency,
 }: {
-  medication: ClinicalMedication;
   protocol: ClinicalProtocol;
   frequency: number;
 }) {
@@ -947,8 +1488,8 @@ function PrescriptionPreview({
     <div className="rounded-md border bg-muted/30 p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-bold">{medication.commercialName ?? medication.activePrinciple}</h3>
-          <p className="text-sm text-muted-foreground">{medication.activePrinciple} · {medication.administrationRoute}</p>
+          <h3 className="font-bold">Prévia da fase</h3>
+          <p className="text-sm text-muted-foreground">{protocol.name}</p>
         </div>
         <Badge variant="primary">{protocol.group?.code ?? protocol.code}</Badge>
       </div>
@@ -1120,6 +1661,134 @@ function resolveActiveRoutine(patient: Patient | null): PatientRoutine | null {
   })[0];
 }
 
+function resolveMedication(catalog: ClinicalMedication[], medicationId: string) {
+  return catalog.find((medication) => medication.id === medicationId) ?? null;
+}
+
+function resolveProtocol(medication: ClinicalMedication | null, protocolId: string) {
+  return medication?.protocols.find((protocol) => protocol.id === protocolId) ?? null;
+}
+
+function resolveFrequencyConfig(protocol: ClinicalProtocol | null, frequency: number) {
+  if (!protocol || frequency <= 0) return null;
+  return protocol.frequencies.find((item) => item.frequency === frequency) ?? null;
+}
+
+function getAllowedRecurrenceOptions(frequencyConfig: ClinicalProtocolFrequency | null) {
+  if (!frequencyConfig) return [];
+
+  const allowedRecurrences = frequencyConfig.allowedRecurrenceTypes?.length
+    ? frequencyConfig.allowedRecurrenceTypes
+    : (["DAILY"] satisfies TreatmentRecurrence[]);
+
+  return recurrenceOptions.filter((option) => {
+    if (!allowedRecurrences.includes(option.value)) return false;
+    if (option.value === "PRN" && frequencyConfig.allowsPrn !== true) return false;
+    return true;
+  });
+}
+
+function isRecurrenceAllowed(recurrenceType: TreatmentRecurrence, frequencyConfig: ClinicalProtocolFrequency | null) {
+  return getAllowedRecurrenceOptions(frequencyConfig).some((option) => option.value === recurrenceType);
+}
+
+function getDefaultRecurrenceForFrequency(frequencyConfig: ClinicalProtocolFrequency | null): TreatmentRecurrence {
+  return getAllowedRecurrenceOptions(frequencyConfig)[0]?.value ?? "DAILY";
+}
+
+function isPrescriptionPhaseManualTimesComplete(phase: PrescriptionPhaseFormValues) {
+  if (!phase.manualAdjustmentEnabled) return true;
+  return (
+    phase.frequency > 0 &&
+    (phase.manualTimes ?? []).length === phase.frequency &&
+    (phase.manualTimes ?? []).every((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time))
+  );
+}
+
+function isPrescriptionPhasePerDoseOverridesComplete(
+  phase: PrescriptionPhaseFormValues,
+  frequencyConfig: ClinicalProtocolFrequency | null,
+) {
+  if (phase.sameDosePerSchedule) {
+    return Boolean(phase.doseValue?.trim()) && Boolean(phase.doseUnit);
+  }
+
+  return (
+    frequencyConfig?.allowsVariableDoseBySchedule === true &&
+    phase.frequency > 0 &&
+    (phase.perDoseOverrides ?? []).length === phase.frequency &&
+    (phase.perDoseOverrides ?? []).every(
+      (override, index) =>
+        override.doseLabel === `D${index + 1}` &&
+        override.doseValue.trim().length > 0 &&
+        override.doseUnit.length > 0,
+    )
+  );
+}
+
+function isPrescriptionPhaseRecurrenceFieldsComplete(phase: PrescriptionPhaseFormValues) {
+  switch (phase.recurrenceType) {
+    case "WEEKLY":
+      return Boolean(phase.weeklyDay);
+    case "MONTHLY":
+      return (
+        typeof phase.monthlyDay === "number" &&
+        Number.isFinite(phase.monthlyDay) &&
+        phase.monthlyDay >= 1 &&
+        phase.monthlyDay <= 31
+      );
+    case "ALTERNATE_DAYS":
+      return (
+        typeof phase.alternateDaysInterval === "number" &&
+        Number.isFinite(phase.alternateDaysInterval) &&
+        phase.alternateDaysInterval >= 2
+      );
+    case "PRN":
+      return Boolean(phase.prnReason);
+    case "DAILY":
+    default:
+      return true;
+  }
+}
+
+function isPrescriptionPhaseComplete(
+  phase: PrescriptionPhaseFormValues,
+  isLastPhase: boolean,
+  frequencyConfig: ClinicalProtocolFrequency | null,
+) {
+  const hasRequiredTreatmentDays =
+    phase.continuousUse ||
+    phase.recurrenceType === "PRN" ||
+    (typeof phase.treatmentDays === "number" && Number.isFinite(phase.treatmentDays) && phase.treatmentDays >= 1);
+
+  return (
+    phase.frequency > 0 &&
+    Boolean(frequencyConfig) &&
+    isRecurrenceAllowed(phase.recurrenceType, frequencyConfig) &&
+    isPrescriptionPhasePerDoseOverridesComplete(phase, frequencyConfig) &&
+    (!phase.continuousUse || isLastPhase) &&
+    hasRequiredTreatmentDays &&
+    isPrescriptionPhaseRecurrenceFieldsComplete(phase) &&
+    isPrescriptionPhaseManualTimesComplete(phase)
+  );
+}
+
+function isPrescriptionMedicationComplete(medication: PrescriptionMedicationFormValues, protocol: ClinicalProtocol | null) {
+  return (
+    medication.clinicalMedicationId.length > 0 &&
+    medication.protocolId.length > 0 &&
+    medication.phases.length > 0 &&
+    Boolean(protocol) &&
+    medication.phases.every((phase, index) =>
+      isPrescriptionPhaseComplete(
+        phase,
+        index === medication.phases.length - 1,
+        resolveFrequencyConfig(protocol, phase.frequency),
+      ),
+    )
+  );
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -1133,13 +1802,24 @@ function resolveCreatedPrescription(
   prescriptions: PatientPrescription[],
   patientId: string,
   startedAt: string,
-  medicationId: string,
+  medicationIds: string[],
 ) {
+  const expectedMedicationIds = [...medicationIds].sort();
   const matches = prescriptions.filter(
-    (prescription) =>
-      prescription.patient.id === patientId &&
-      prescription.startedAt === startedAt &&
-      prescription.medications.some((medication) => medication.sourceClinicalMedicationId === medicationId),
+    (prescription) => {
+      if (prescription.patient.id !== patientId || prescription.startedAt !== startedAt) {
+        return false;
+      }
+
+      const prescriptionMedicationIds = prescription.medications
+        .map((medication) => medication.sourceClinicalMedicationId)
+        .sort();
+
+      return (
+        prescriptionMedicationIds.length === expectedMedicationIds.length &&
+        expectedMedicationIds.every((medicationId, index) => prescriptionMedicationIds[index] === medicationId)
+      );
+    },
   );
   return matches.at(-1) ?? null;
 }
